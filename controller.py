@@ -36,7 +36,7 @@ class MacLearningController(Thread):
         self.send(pkt)
 
     def handlePkt(self, pkt):
-        #pkt.show2()
+        pkt.show2()
         assert CPUMetadata in pkt, "Should only receive packets from switch with special header"
 
         # Ignore packets that the CPU sends:
