@@ -9,7 +9,8 @@ class CPUMetadata(Packet):
     name = "CPUMetadata"
     fields_desc = [ ByteField("fromCpu", 0),
                     ShortField("origEtherType", None),
-                    ShortField("srcPort", None)]
+                    ShortField("srcPort", None),
+                    ShortField("dstPort", None),]
 
 bind_layers(Ether, CPUMetadata, type=TYPE_CPU_METADATA)
 bind_layers(CPUMetadata, IP, origEtherType=0x0800)
