@@ -164,9 +164,9 @@ control MyIngress(inout headers hdr,
 
     action cpu_meta_decap() {
         hdr.ethernet.etherType = hdr.cpu_metadata.origEtherType;
-        // if (hdr.cpu_metadata.dstPort != 0){
-        //     set_egr((bit<9>) hdr.cpu_metadata.dstPort);
-        // }
+        if (hdr.cpu_metadata.dstPort != 0){
+            standard_metadata.egress_spec = (port_t)hdr.cpu_metadata.dstPort;
+        }
         hdr.cpu_metadata.setInvalid();
     }
 
@@ -254,13 +254,16 @@ control MyIngress(inout headers hdr,
 
         if (standard_metadata.ingress_port == CPU_PORT){
             cpu_meta_decap();
+            if (hdr.pwospf.isValid()){
+                return;
+            }
         }
 
-        if (hdr.arp.isValid() && standard_metadata.ingress_port != CPU_PORT) {
+        if ((hdr.pwospf.isValid() || hdr.arp.isValid()) && standard_metadata.ingress_port != CPU_PORT) {
             send_to_cpu();
             return;
         }
-        else if (hdr.ipv4.isValid() && !hdr.pwospf.isValid()) {
+        else if (hdr.ipv4.isValid()) {
             if (hdr.ipv4.ttl < 1) {
                 drop();
                 // ICMP timeout
@@ -278,8 +281,7 @@ control MyIngress(inout headers hdr,
             routing_table.apply();
             arp_table.apply();
             return;
-        }
-        if (hdr.ethernet.isValid()) {
+        }else if (hdr.ethernet.isValid()) {
             fwd_l2.apply();
         }
 

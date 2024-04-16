@@ -1,10 +1,10 @@
 import struct
 from copy import deepcopy
 
-from scapy.fields import ByteField, ByteEnumField, LenField, IPField, \
-    XShortField, ShortField, LongField, PadField, FieldLenField, PacketListField
+from scapy.fields import ByteField, IntField, LenField, IPField, \
+    ShortField, LongField,  FieldLenField, PacketListField
 from scapy.packet import Packet, bind_layers
-from scapy.layers.inet import IP, DestIPField
+from scapy.layers.inet import IP
 from scapy.layers.l2 import Ether
 from scapy.utils import checksum
 
@@ -33,9 +33,10 @@ class PWOSPF_Header(Packet):
     fields_desc = [
         ByteField('version', 2),
         ByteField('type', None),
-        LenField('len', None, adjust=lambda x: x+24), # payload + PWOSFP header
+        # payload + PWOSFP header
+        LenField('len', None, adjust=lambda x: x+24),
         IPField('routerid', '0.0.0.0'),
-        IPField('areaid', None),
+        IntField('areaid', None),
         ShortField('checksum', None),
         ShortField('autype', 0),
         LongField('authentication', 0)
@@ -57,6 +58,7 @@ class PWOSPF_Header(Packet):
             p = p[:12] + chksm.to_bytes(2, 'big') + p[14:]
         return p
 
+
 class PWOSPF_Hello(Packet):
     """
     0                   1                   2                   3
@@ -74,6 +76,7 @@ class PWOSPF_Hello(Packet):
         ShortField('helloint', None),
         ShortField('padding', 0)
     ]
+
 
 class PWOSPF_LSA(Packet):
     """
@@ -129,15 +132,15 @@ class PWOSPF_LSU(Packet):
     fields_desc = [
         ShortField('sequence', 0),
         ShortField('ttl', 32),
-        FieldLenField('numlsa', None, fmt='!I', count_of='lsalist'),
+        FieldLenField('numLsa', None, fmt='!I', count_of='lsaList'),
         PacketListField('lsaList', None, PWOSPF_LSA,
-                        count_from=lambda pkt: pkt.numlsa,
-                        length_from=lambda pkt: 12 * pkt.lsacount)
+                        count_from=lambda pkt: pkt.numLsa)
     ]
 
     def extract_padding(self, p):
         return '', p
 
-bind_layers(IP, PWOSPF_Header, proto=89) # using OSPF protocol number
+
+bind_layers(IP, PWOSPF_Header, proto=89)  # using OSPF protocol number
 bind_layers(PWOSPF_Header, PWOSPF_Hello, type=1)
 bind_layers(PWOSPF_Header, PWOSPF_LSU, type=4)

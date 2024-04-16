@@ -16,7 +16,7 @@ local f_version = ProtoField.uint8("pwospf.version", "Version", base.DEC)
 local f_type = ProtoField.uint8("pwospf.type", "Type", base.DEC)
 local f_packet_length = ProtoField.uint16("pwospf.packet_length", "Packet Length", base.DEC)
 local f_router_id = ProtoField.ipv4("pwospf.router_id", "Router ID")
-local f_area_id = ProtoField.ipv4("pwospf.area_id", "Area ID")
+local f_area_id = ProtoField.uint32("pwospf.area_id", "Area ID")
 local f_checksum = ProtoField.uint16("pwospf.checksum", "Checksum", base.HEX)
 local f_autype = ProtoField.uint16("pwospf.autype", "Authentication Type", base.DEC)
 local f_authentication = ProtoField.uint64("pwospf.authentication", "Authentication", base.HEX)
@@ -86,16 +86,17 @@ function p_pwospf.dissector(buffer, pinfo, tree)
 
     local payload_offset = 24
     if buffer:len() > payload_offset then
-        local payload_tree = subtree:add(buffer(payload_offset), "Payload")
-
+        
         -- Handling different types based on type field
         if type == 1 then
+            local payload_tree = subtree:add(buffer(payload_offset), "PWOSPF HELLO Packet")
             -- PWOSPF Hello packet
             pinfo.cols.info:set("PWOSPF Hello")
             subtree:add(f_netmask, buffer(payload_offset, 4))
             subtree:add(f_helloint, buffer(payload_offset + 4, 2))
             subtree:add(f_padding, buffer(payload_offset + 6, 2))
         elseif type == 4 then
+            local payload_tree = subtree:add(buffer(payload_offset), "PWOSPF LSU Packet")
             -- PWOSPF LSU packet
             pinfo.cols.info:set("PWOSPF LSU")
             subtree:add(f_sequence, buffer(payload_offset, 2))

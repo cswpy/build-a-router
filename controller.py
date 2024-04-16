@@ -1,10 +1,12 @@
 from threading import Thread, Event
 from scapy.all import sendp
 from scapy.all import Packet, Ether, IP, ARP, ICMP
-from pwospf_proto import PWOSPF_Header, PWOSPF_Hello
+from pwospf_proto import PWOSPF_Header, PWOSPF_Hello, PWOSPF_LSU, PWOSPF_LSA
+from collections import defaultdict
 from async_sniff import sniff
 from utils import *
 from cpu_metadata import CPUMetadata
+import datetime
 import time
 
 ARP_OP_REQ = 0x0001
@@ -21,22 +23,111 @@ class PWOSPF_Interface():
         self.iface = iface
         self.MAC = mac
         self.port = port
-        self.neighbors = {}  # (neighbor_id, IP) -> last_recv_time
+        self.neighbors = {}  # (router_id, neighbor_IP) -> last_recv_time
 
-    # def start(self):
-    #     self.thread = Thread(target=self._hello)
-    #     self.thread.start()
+    def __str__(self):
+        return "Interface Name: {}\nIP: {}, Subnet: {}, HelloInt: {}, MAC: {}, Port: {}\n".format(self.iface, self.ip_addr, self.subnet_mask, self.helloint, self.MAC, self.port)
 
-    # def stop(self):
-    #     self.stop_event.set()
-    #     self.thread.join()
 
-    # def _hello(self):
-    #     while True:
-    #         if self.stop_event and self.stop_event.is_set():
-    #             break
-    #         self.router.send(self.hello_pkt, iface=self.iface)
-    #         time.sleep(self.helloint)
+class LSU_Daemon(Thread):
+    def __init__(self, router, lsuint, start_wait=.3, **kwargs):
+        super(LSU_Daemon, self).__init__(**kwargs)
+        self.router = router
+        self.lsuint = lsuint
+        self.start_wait = start_wait
+        self.seq = 0
+        self.stop_event = Event()
+        self.trigger_lsu_event = Event()
+        self.adjacency_list = defaultdict(list)
+        self.topology = defaultdict(lambda: {'checksum': None, 'seq': -1, 'last_recv_time': None}) # router_id -> {checksum, seq, last_recv_time}
+
+    def flood_LSU(self):
+
+        def craft_LSU_packet():
+            LSA_list = []
+            for intf in self.router.intfs:
+                if intf.neighbors:
+                    for router_id, _ in intf.neighbors.keys():
+                        lsa_pkt = PWOSPF_LSA(subnet=get_subnet(
+                            intf.ip_addr, intf.subnet_mask), mask=intf.subnet_mask, routerid=router_id)
+                        LSA_list.append(lsa_pkt)
+                else:
+                    lsa_pkt = PWOSPF_LSA(subnet=get_subnet(
+                        intf.ip_addr, intf.subnet_mask), mask=intf.subnet_mask, routerid="0.0.0.0")
+                    LSA_list.append(lsa_pkt)
+            lsu_pkt = PWOSPF_Header(type=4, routerid=self.router.router_id,
+                                    areaid=self.router.area_id) / PWOSPF_LSU(sequence=self.seq, lsaList=LSA_list)
+            return lsu_pkt
+
+        lsu_pkt = craft_LSU_packet()
+        for intf in self.router.intfs:
+            for _, router_ip in intf.neighbors.keys():
+                pkt = Ether() / CPUMetadata(origEtherType=0x0800, srcPort=1,
+                                            dstPort=intf.port) / IP(src=intf.ip_addr, dst=router_ip, proto=PWOSPF_PROTO) / lsu_pkt
+                self.router.send(pkt)
+        # Updating adjacency information for the router itself
+        self.adjacency_list[self.router.router_id] = []
+        for lsa in lsu_pkt[PWOSPF_LSU].lsaList:
+            self.adjacency_list[self.router.router_id].append(
+                LSA_tuple(lsa.subnet, lsa.mask, lsa.routerid))
+        self.seq += 1
+
+    def handle_LSU(self, pkt):
+        rid = pkt[PWOSPF_Header].routerid
+        if rid == self.router.router_id:
+            return
+        if pkt[PWOSPF_LSU].sequence <= self.topology[rid]['seq']:
+            return
+        self.topology[rid]['seq'] = pkt[PWOSPF_LSU].sequence
+        self.topology[rid]['last_recv_time'] = datetime.datetime.now()
+        # if valid packet and topology has changed -> reset adjacency list for that router
+        is_chksum_same = self.topology[rid]['checksum'] == pkt[PWOSPF_LSU].checksum
+        self.topology[rid]['checksum'] = pkt[PWOSPF_LSU].checksum
+
+        if not is_chksum_same:
+            self.adjacency_list[rid] = []
+            for lsa in pkt[PWOSPF_LSU].lsaList:
+                self.adjacency_list[rid].append(
+                    LSA_tuple(lsa.subnet, lsa.mask, lsa.routerid))
+
+        # flood LSU packets
+        pkt[PWOSPF_Header].ttl -= 1
+        if pkt[PWOSPF_Header].ttl > 0:
+            for intf in self.router.intfs:
+                if intf.port == pkt[CPUMetadata].srcPort or not intf.neighbors:
+                    continue
+                for _, router_ip in intf.neighbors.keys():
+                    pkt[IP].src = router_ip
+                    pkt[CPUMetadata].dstPort = intf.port
+                    self.router.send(pkt)
+
+        # run djikstra if topology has changed
+        if not is_chksum_same:
+            graph = build_graph(self.adjacency_list)
+            next_hops = find_next_hop(graph, self.router.router_id)
+
+            for dst, next_hop in next_hops.items():
+                if dst == next_hop:
+                    continue
+                next_hop_port = self.router.nhop_rid2port[next_hop]
+                self.router.global_rid2nhop[dst] = (next_hop, next_hop_port)
+
+    def run(self):
+        while True:
+            if self.stop_event and self.stop_event.is_set():
+                break
+            has_neighbor_changed = self.trigger_lsu_event.wait(self.lsuint)
+            if has_neighbor_changed:
+                self.trigger_lsu_event.clear()
+            self.flood_LSU()
+
+    def start(self):
+        super(LSU_Daemon, self).start()
+        time.sleep(self.start_wait)
+
+    def join(self, *args, **kwargs):
+        self.stop_event.set()
+        super(LSU_Daemon, self).join(*args, **kwargs)
 
 
 class PWOSPF_Router(Thread):
@@ -48,15 +139,19 @@ class PWOSPF_Router(Thread):
         self.intfs = []
         self.iface = iface
         self.start_wait = start_wait
-        self.lsu_interval = lsuint
+        self.lsuint = lsuint
+        self.lsu_daemon = LSU_Daemon(self, lsuint)
         self.MAC = self.sw.intfs[1].MAC()
+        self.nhop_subnet2port = {} #TODO: network addr?
+        self.global_subnet2nhop = {} #TODO: for synchronizing rules, network addr -> next_hop_ip, port
         self.hello_threads = []
         self.stop_event = Event()
 
         for i in range(1, len(intfs)):
             # skip the first interface, which is connected to the CPU
-            ip_addr, subnet_mask, iface, mac, port = intfs[i].ip, prefix_len_to_mask(
-                int(intfs[i].prefixLen)), intfs[i].name, intfs[i].MAC(), self.sw.ports[intfs[i]]
+            subnet_mask, iface, mac, port = "255.255.255.0", intfs[i].name, intfs[i].MAC(
+            ), self.sw.ports[intfs[i]]
+            ip_addr = get_ip_addr(iface)
             intf = PWOSPF_Interface(
                 ip_addr, subnet_mask, helloint, iface, mac, port)
             self.intfs.append(intf)
@@ -66,7 +161,7 @@ class PWOSPF_Router(Thread):
         intf = self.intfs[intf_id]
         etherLayer = Ether(src=intf.MAC, dst="ff:ff:ff:ff:ff:ff")
         CPUlayer = CPUMetadata(
-            fromCpu=1, origEtherType=0x0800, srcPort=1, dstPort=intf.port)
+            origEtherType=0x0800, srcPort=1, dstPort=intf.port)
         IPLayer = IP(src=intf.ip_addr, dst=PWOSPF_ALLSPFRouters,
                      proto=PWOSPF_PROTO, ttl=1)
         PWOSPFHeader = PWOSPF_Header(
@@ -79,6 +174,12 @@ class PWOSPF_Router(Thread):
             if self.stop_event and self.stop_event.is_set():
                 break
             self.send(hello_pkt)
+            for neighbor, last_recv_time in list(intf.neighbors.items()):
+                if time.time() - last_recv_time > intf.helloint * 3:
+                    del intf.neighbors[neighbor]
+                    # trigger LSU flood on change
+                    if self.lsu_daemon:
+                        self.lsu_daemon.trigger_lsu_event.set()
             time.sleep(intf.helloint)
 
     def send(self, *args, **override_kwargs):
@@ -95,10 +196,12 @@ class PWOSPF_Router(Thread):
             t = Thread(target=self._hello, args=(intf_id,))
             self.hello_threads.append(t)
             t.start()
+        self.lsu_daemon.start()
         time.sleep(self.start_wait)
 
     def join(self, *args, **kwargs):
         self.stop_event.set()
+        self.lsu_daemon.join()
         for thread in self.hello_threads:
             thread.join()
         super(PWOSPF_Router, self).join(*args, **kwargs)
@@ -122,7 +225,7 @@ class MacLearningController(Thread):
         self.fwd_table = {}
         self.stop_event = Event()
         self.router = PWOSPF_Router(
-            sw, self.intfs[0].ip, 1, self.intfs, self.iface)
+            sw, get_ip_addr(self.intfs[0].name), 1, self.intfs, self.iface)
 
     def addMacAddr(self, mac, port):
         # Don't re-add the mac-port mapping if we already have it:
@@ -177,7 +280,7 @@ class MacLearningController(Thread):
         self.send(pkt)
 
     def handlePkt(self, pkt):
-        pkt.show2()
+        # pkt.show2()
         assert CPUMetadata in pkt, "Should only receive packets from switch with special header"
 
         # Ignore packets that the CPU sends:
@@ -189,6 +292,39 @@ class MacLearningController(Thread):
                 self.handleArpRequest(pkt)
             elif pkt[ARP].op == ARP_OP_REPLY:
                 self.handleArpReply(pkt)
+        elif PWOSPF_Header in pkt:
+            self.handlePWOSPFPkt(pkt)
+
+    def handlePWOSPFPkt(self, pkt):
+
+        def handleHelloPkt(pkt, intf):
+            if pkt[PWOSPF_Hello].netmask != intf.subnet_mask:
+                return
+            if pkt[PWOSPF_Hello].helloint != intf.helloint:
+                return
+            router_id = pkt[PWOSPF_Header].routerid
+            router_ip = pkt[IP].src
+            intf.neighbors[(router_id, router_ip)] = time.time()
+            # TODO: network addr?
+            self.router.neighbor_rid2port[router_id] = intf.port
+
+        if pkt[PWOSPF_Header].version != 2:
+            return
+        if pkt[PWOSPF_Header].type != 1 and pkt[PWOSPF_Header].type != 4:
+            return
+        if pkt[PWOSPF_Header].areaid != self.router.area_id:
+            return
+        if pkt[PWOSPF_Header].autype != 0:
+            return
+
+        intf = None
+        for i in range(len(self.router.intfs)):
+            if pkt[CPUMetadata].srcPort == self.router.intfs[i].port:
+                intf = self.router.intfs[i]
+                break
+
+        if intf and PWOSPF_Hello in pkt:
+            handleHelloPkt(pkt, intf)
 
     def send(self, *args, **override_kwargs):
         pkt = args[0]

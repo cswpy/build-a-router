@@ -31,7 +31,7 @@ class DoubleSwitchTopo(Topo):
     # Port assignment: 1 -> CPU, router-to-host, router-to-router
     def __init__(self, n, **opts):
         Topo.__init__(self, **opts)
-
+        self.n = n
         assert n < 15, "Too many hosts"
 
         switch1 = self.addSwitch("s1")
@@ -46,18 +46,18 @@ class DoubleSwitchTopo(Topo):
             host = self.addHost(
                 "h1-%d" % i, ip="10.0.1.%d" % (100+i)
             )
-            self.addLink(host, switch1, port2=i, params2={"ip": "10.0.1.%d/24" % i})
+            self.addLink(host, switch1, port2=i)
         for i in range(2, n+1):
             host = self.addHost(
                 "h2-%d" % i, ip="10.0.2.%d" % (100+i)
             )
-            self.addLink(host, switch2, port2=i, params2={"ip": "10.0.2.%d/24" % i})
-        self.addLink(switch1, switch2, port1=n+1, port2=n+1, params1={"ip": "10.0.1.%d/24" % (n+1)}, params2={"ip": "10.0.2.%d/24" % (n+1)})
+            self.addLink(host, switch2, port2=i)
+        self.addLink(switch1, switch2, port1=n+1, port2=n+1)
 
     def __str__(self):
         resp = "************ TOPOLOGY ************\n"
         for host in self.hosts():
-            resp += "Host: %s\n" % host
+            resp += "Host: %s\t%s\n" % (host, self.nodeInfo(host))
         resp += "************ LINKS **************\n"
         for switch in self.switches():
             for link in self.links(withInfo=True):
