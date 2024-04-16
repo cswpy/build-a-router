@@ -30,8 +30,9 @@ class PWOSPF_Interface():
 
 
 class LSU_Daemon(Thread):
-    def __init__(self, router, lsuint, start_wait=.3, **kwargs):
+    def __init__(self, sw, router, lsuint, start_wait=.3, **kwargs):
         super(LSU_Daemon, self).__init__(**kwargs)
+        self.sw = sw
         self.router = router
         self.lsuint = lsuint
         self.start_wait = start_wait
@@ -39,7 +40,12 @@ class LSU_Daemon(Thread):
         self.stop_event = Event()
         self.trigger_lsu_event = Event()
         self.adjacency_list = defaultdict(list)
-        self.topology = defaultdict(lambda: {'checksum': None, 'seq': -1, 'last_recv_time': None}) # router_id -> {checksum, seq, last_recv_time}
+        # router_id -> {checksum, seq, last_recv_time, subnet (obtained from LSA)}
+        self.topology = defaultdict(
+            lambda: {'checksum': None, 'seq': -1, 'last_recv_time': None, 'subnets': []})
+        self.global_subnet2nexthop = {}  # current rules
+        # buffer for synchronizing rules, network addr -> (next_hop_ip, port, distance) next_hop_ip,: IP of the receiving interface, port: port to reach the next hop
+        self.pending_subnet2nexthop = {}
 
     def flood_LSU(self):
 
@@ -48,11 +54,11 @@ class LSU_Daemon(Thread):
             for intf in self.router.intfs:
                 if intf.neighbors:
                     for router_id, _ in intf.neighbors.keys():
-                        lsa_pkt = PWOSPF_LSA(subnet=get_subnet(
+                        lsa_pkt = PWOSPF_LSA(subnet=calculate_subnet(
                             intf.ip_addr, intf.subnet_mask), mask=intf.subnet_mask, routerid=router_id)
                         LSA_list.append(lsa_pkt)
                 else:
-                    lsa_pkt = PWOSPF_LSA(subnet=get_subnet(
+                    lsa_pkt = PWOSPF_LSA(subnet=calculate_subnet(
                         intf.ip_addr, intf.subnet_mask), mask=intf.subnet_mask, routerid="0.0.0.0")
                     LSA_list.append(lsa_pkt)
             lsu_pkt = PWOSPF_Header(type=4, routerid=self.router.router_id,
@@ -81,14 +87,15 @@ class LSU_Daemon(Thread):
         self.topology[rid]['seq'] = pkt[PWOSPF_LSU].sequence
         self.topology[rid]['last_recv_time'] = datetime.datetime.now()
         # if valid packet and topology has changed -> reset adjacency list for that router
-        is_chksum_same = self.topology[rid]['checksum'] == pkt[PWOSPF_LSU].checksum
-        self.topology[rid]['checksum'] = pkt[PWOSPF_LSU].checksum
+        is_chksum_same = self.topology[rid]['checksum'] == pkt[PWOSPF_Header].checksum
+        self.topology[rid]['checksum'] = pkt[PWOSPF_Header].checksum
 
         if not is_chksum_same:
             self.adjacency_list[rid] = []
             for lsa in pkt[PWOSPF_LSU].lsaList:
                 self.adjacency_list[rid].append(
                     LSA_tuple(lsa.subnet, lsa.mask, lsa.routerid))
+                self.topology[rid]['subnets'].append(lsa.subnet)
 
         # flood LSU packets
         pkt[PWOSPF_Header].ttl -= 1
@@ -104,13 +111,32 @@ class LSU_Daemon(Thread):
         # run djikstra if topology has changed
         if not is_chksum_same:
             graph = build_graph(self.adjacency_list)
-            next_hops = find_next_hop(graph, self.router.router_id)
-
+            next_hops, nhop = find_next_hop(graph, self.router.router_id)
+            subnet_nhop = defaultdict(lambda: float('inf'))
             for dst, next_hop in next_hops.items():
                 if dst == next_hop:
                     continue
-                next_hop_port = self.router.nhop_rid2port[next_hop]
-                self.router.global_rid2nhop[dst] = (next_hop, next_hop_port)
+                intf, neighbor_router_ip = self.router.nexthop_rid2intf[next_hop]
+                next_hop_port = self.router.rid2intf[next_hop].port
+                for dst_subnet in self.topology[dst]['subnets']:
+                    if dst_subnet not in self.pending_subnet2nexthop or nhop[dst] < subnet_nhop[dst_subnet]:
+                        self.pending_subnet2nexthop[dst_subnet] = (
+                            neighbor_router_ip, next_hop_port)
+                        subnet_nhop[dst_subnet] = nhop[dst]
+
+    def sync_routing_table(self):
+        for subnet, (next_hop_ip, port) in self.global_subnet2nexthop.items():
+            if subnet in self.global_subnet2nexthop and (next_hop_ip, port) != self.global_subnet2nexthop[subnet]:
+                self.sw.removeTableEntry(table_name='MyIngress.routing_table',
+                                         match_fields={'hdr.ipv4.dstAddr': [subnet, 32]})
+            self.sw.insertTableEntry(table_name='MyIngress.routing_table',
+                                     match_fields={
+                                         'hdr.ipv4.dstAddr': [subnet, 32]},
+                                     action_name='MyIngress.ipv4_route',
+                                     action_params={'next_hop': next_hop_ip, 'port': port})
+        self.global_subnet2nexthop = self.pending_subnet2nexthop.copy()
+        self.pending_subnet2nexthop = {}
+        print("Routing table synchronized to data plane")
 
     def run(self):
         while True:
@@ -131,7 +157,7 @@ class LSU_Daemon(Thread):
 
 
 class PWOSPF_Router(Thread):
-    def __init__(self, sw, router_id, area_id, intfs, iface, helloint=5, lsuint=10, start_wait=0.3):
+    def __init__(self, sw, router_id, area_id, intfs_info, iface, helloint=5, lsuint=10, start_wait=0.3):
         super(PWOSPF_Router, self).__init__()
         self.sw = sw
         self.router_id = router_id
@@ -140,18 +166,20 @@ class PWOSPF_Router(Thread):
         self.iface = iface
         self.start_wait = start_wait
         self.lsuint = lsuint
-        self.lsu_daemon = LSU_Daemon(self, lsuint)
+        self.lsu_daemon = LSU_Daemon(sw, self, lsuint)
         self.MAC = self.sw.intfs[1].MAC()
-        self.nhop_subnet2port = {} #TODO: network addr?
-        self.global_subnet2nhop = {} #TODO: for synchronizing rules, network addr -> next_hop_ip, port
+        # rid -> (intf, neighbor_router_ip) intf: intf for next hop (immediate neighbor) through Hello packets, neighbor_router_ip: IP of the neighbor router
+        self.nexthop_rid2intf = {}
         self.hello_threads = []
         self.stop_event = Event()
 
-        for i in range(1, len(intfs)):
+        for intf_name, intf in self.sw.nameToIntf.items():
             # skip the first interface, which is connected to the CPU
-            subnet_mask, iface, mac, port = "255.255.255.0", intfs[i].name, intfs[i].MAC(
-            ), self.sw.ports[intfs[i]]
-            ip_addr = get_ip_addr(iface)
+            if 'lo' in intf_name or intf_name.endswith('eth1'):
+                continue
+            iface, mac = intf_name, intf.MAC()
+            port = self.sw.ports[intf]
+            ip_addr, subnet_mask = intfs_info[iface][0], intfs_info[iface][1]
             intf = PWOSPF_Interface(
                 ip_addr, subnet_mask, helloint, iface, mac, port)
             self.intfs.append(intf)
@@ -177,6 +205,7 @@ class PWOSPF_Router(Thread):
             for neighbor, last_recv_time in list(intf.neighbors.items()):
                 if time.time() - last_recv_time > intf.helloint * 3:
                     del intf.neighbors[neighbor]
+                    del self.nexthop_rid2intf[neighbor[0]]
                     # trigger LSU flood on change
                     if self.lsu_daemon:
                         self.lsu_daemon.trigger_lsu_event.set()
@@ -212,7 +241,7 @@ class MacLearningController(Thread):
     intfs: [(ip_addr, subnet_mask, helloint, iface), ...] first intf should be the one connected to the CPU
     '''
 
-    def __init__(self, sw, start_wait=0.3):
+    def __init__(self, sw, intfs_info, start_wait=0.3):
         super(MacLearningController, self).__init__()
         # assert intfs[0][3].endswith('eth1'), "First interface should be connected to the CPU"
         self.sw = sw
@@ -225,7 +254,7 @@ class MacLearningController(Thread):
         self.fwd_table = {}
         self.stop_event = Event()
         self.router = PWOSPF_Router(
-            sw, get_ip_addr(self.intfs[0].name), 1, self.intfs, self.iface)
+            sw, intfs_info[self.iface][0], 1, intfs_info, self.iface)
 
     def addMacAddr(self, mac, port):
         # Don't re-add the mac-port mapping if we already have it:
@@ -303,10 +332,13 @@ class MacLearningController(Thread):
             if pkt[PWOSPF_Hello].helloint != intf.helloint:
                 return
             router_id = pkt[PWOSPF_Header].routerid
-            router_ip = pkt[IP].src
-            intf.neighbors[(router_id, router_ip)] = time.time()
-            # TODO: network addr?
-            self.router.neighbor_rid2port[router_id] = intf.port
+            neighbor_router_ip = pkt[IP].src
+            intf.neighbors[(router_id, neighbor_router_ip)] = time.time()
+            # subnet = calculate_subnet(neighbor_router_ip, intf.subnet_mask)
+            # assert subnet == calculate_subnet(
+            #     intf.ip_addr, intf.subnet_mask), "Subnet mismatch: {} vs {}\nmask: {}".format(subnet, calculate_subnet(intf.ip_addr, intf.subnet_mask), intf.subnet_mask)
+            self.router.nexthop_rid2intf[router_id] = (
+                intf, neighbor_router_ip)
 
         if pkt[PWOSPF_Header].version != 2:
             return
@@ -315,6 +347,10 @@ class MacLearningController(Thread):
         if pkt[PWOSPF_Header].areaid != self.router.area_id:
             return
         if pkt[PWOSPF_Header].autype != 0:
+            return
+
+        if PWOSPF_LSU in pkt:
+            self.router.lsu_daemon.handle_LSU(pkt)
             return
 
         intf = None

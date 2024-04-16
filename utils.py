@@ -11,7 +11,7 @@ def get_ip_addr(intf_name):
     ip_addr = "10.0.{}.{}".format(sw_num, intf_num)
     return ip_addr
 
-def get_subnet(ip_addr, mask):
+def calculate_subnet(ip_addr, mask):
     # assume both ip_addr and mask are strings in the form of IP addresses
     ip_addr = ip_addr.split(".")
     mask = mask.split(".")
@@ -60,15 +60,16 @@ def find_next_hop(graph, start):
             prev = curr
             curr = parent[curr]
         next_hop[node] = prev
-    return next_hop
+    return next_hop, distances
 
-graph = {
-            'U': ['V', 'W', 'X'],
-            'V': ['U', 'X', 'W'],
-            'W': ['V', 'U', 'X', 'Y', 'Z'],
-            'X': ['U', 'V', 'W', 'Y'],
-            'Y': ['X', 'W', 'Z'],
-            'Z': ['W', 'Y'],
-        }
+if __name__ == "__main__":
+    graph = {
+                'U': ['V', 'W', 'X'],
+                'V': ['U', 'X', 'W'],
+                'W': ['V', 'U', 'X', 'Y', 'Z'],
+                'X': ['U', 'V', 'W', 'Y'],
+                'Y': ['X', 'W', 'Z'],
+                'Z': ['W', 'Y'],
+            }
 
-print(find_next_hop(graph, 'U'))
+    print(find_next_hop(graph, 'U'))

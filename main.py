@@ -1,77 +1,51 @@
 from p4app import P4Mininet
 
 from controller import MacLearningController
-from my_topo import SingleSwitchTopo, DoubleSwitchTopo
+from my_topo import SingleSwitchTopo, DoubleSwitchTopo, RingTopo
 import time
 
 
-def test_double_topo():
-    # Add three hosts. Port 1 (h1) is reserved for the CPU.
-    N = 3
+def test_ring_topo(num_switch=2, num_host=3):
 
-    # topo = SingleSwitchTopo(N)
-    topo = DoubleSwitchTopo(N)
+    topo = RingTopo(num_switch, num_host)
 
     print(topo)
 
     net = P4Mininet(program="l2switch.p4", topo=topo, auto_arp=False)
     net.start()
-
+    switches = []
     # Add a mcast group for all ports (except for the CPU port)
     bcast_mgid = 1
-    s1 = net.get("s1")
-    s1.addMulticastGroup(mgid=bcast_mgid, ports=range(2, N + 1))
+    for sw_ind in range(1, topo.num_switch+1):
+        sw_name = "s%d" % sw_ind
+        sw = net.get(sw_name)
+        sw.addMulticastGroup(mgid=bcast_mgid, ports=range(2, num_host + 1))
 
-    s2 = net.get("s2")
-    s2.addMulticastGroup(mgid=bcast_mgid, ports=range(2, N + 1))
+        # Send MAC bcast packets to the bcast multicast group
+        sw.insertTableEntry(
+            table_name="MyIngress.fwd_l2",
+            match_fields={"hdr.ethernet.dstAddr": ["ff:ff:ff:ff:ff:ff"]},
+            action_name="MyIngress.set_mgid",
+            action_params={"mgid": bcast_mgid},
+        )
 
-
-    # Send MAC bcast packets to the bcast multicast group
-    s1.insertTableEntry(
-        table_name="MyIngress.fwd_l2",
-        match_fields={"hdr.ethernet.dstAddr": ["ff:ff:ff:ff:ff:ff"]},
-        action_name="MyIngress.set_mgid",
-        action_params={"mgid": bcast_mgid},
-    )
-    s2.insertTableEntry(
-        table_name="MyIngress.fwd_l2",
-        match_fields={"hdr.ethernet.dstAddr": ["ff:ff:ff:ff:ff:ff"]},
-        action_name="MyIngress.set_mgid",
-        action_params={"mgid": bcast_mgid},
-    )
-
-    # ipv4 static routing table
-    s1.insertTableEntry(
-        table_name="MyIngress.local_ip_table",
-        match_fields={"hdr.ipv4.dstAddr": ["10.0.1.1"]},
-        action_name="send_to_cpu",
-        action_params={},
-    )
-    s2.insertTableEntry(
-        table_name="MyIngress.local_ip_table",
-        match_fields={"hdr.ipv4.dstAddr": ["10.0.2.1"]},
-        action_name="send_to_cpu",
-        action_params={},
-    )
-
-
+        # ipv4 static routing table
+        sw.insertTableEntry(
+            table_name="MyIngress.local_ip_table",
+            match_fields={"hdr.ipv4.dstAddr": [topo.get_ip_addr("%s-eth1" % sw_name)]},
+            action_name="send_to_cpu",
+            action_params={},
+        )   
+        switches.append(sw)
+    controllers = []
     # Start the MAC learning controller
-    cpu1=MacLearningController(s1)
-    cpu1.start()
-    cpu2=MacLearningController(s2)
-    cpu2.start()
+    for sw in switches:
+        intfs_info = topo.get_sw_intfs_info(sw.name)
+        cpu = MacLearningController(sw, intfs_info)
+        cpu.start()
+        controllers.append(cpu)
 
-    h1_2, h1_3=net.get("h1-2"), net.get("h1-3")
-
-    # print(h1_2.cmd("arping -c1 10.0.1.103"))
-
-    #print(h1_3.cmd("ping -c1 10.0.1.102"))
-
-    # print(h3.cmd("ping -c1 10.0.0.1"))
-
-    # These table entries were added by the CPU:
-    s1.printTableEntries()
-    s2.printTableEntries()
+    return net, switches, controllers
 
 def test_single_topo():
     # Add three hosts. Port 1 (h1) is reserved for the CPU.
@@ -110,4 +84,19 @@ def test_single_topo():
     # These table entries were added by the CPU:
     sw.printTableEntries()
 
-test_double_topo()
+net, switches, controllers = test_ring_topo(2, 3)
+
+
+#h1_2, h1_3=net.get("h1-2"), net.get("h1-3")
+
+# print(h1_2.cmd("arping -c1 10.0.1.103"))
+
+#print(h1_3.cmd("ping -c1 10.0.1.102"))
+
+# print(h3.cmd("ping -c1 10.0.0.1"))
+
+# These table entries were added by the CPU:
+for sw in switches:
+    sw.printTableEntries() 
+
+
