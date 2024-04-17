@@ -141,7 +141,10 @@ control MyIngress(inout headers hdr,
                   inout standard_metadata_t standard_metadata) {
 
     ipv4Addr_t next_hop_ip_addr = 32w0;
-    port_t dstPort = 0;
+
+    counter(5, CounterType.packets) ip_counter;
+    counter(5, CounterType.packets) arp_counter;
+    counter(5, CounterType.packets) cpu_counter;
 
     action drop() {
         mark_to_drop(standard_metadata);
@@ -172,6 +175,7 @@ control MyIngress(inout headers hdr,
 
     action send_to_cpu() {
         cpu_meta_encap();
+        cpu_counter.count((bit<32>) 1);
         standard_metadata.egress_spec = CPU_PORT;
     }
 
@@ -206,6 +210,7 @@ control MyIngress(inout headers hdr,
         default_action = send_to_cpu();
     }
     // find the mac addr based on next-hop addr
+    // If not found, send to CPU so that CPU can send an ARP request
     table arp_table {
         key = {
             next_hop_ip_addr: lpm;
@@ -217,7 +222,7 @@ control MyIngress(inout headers hdr,
             NoAction;
         }   
         size = 64;
-        default_action = NoAction;
+        default_action = send_to_cpu();
     }
 
     // forward any packets with matching ip addr to CPU
@@ -253,20 +258,26 @@ control MyIngress(inout headers hdr,
     apply {
 
         if (standard_metadata.ingress_port == CPU_PORT){
-            cpu_meta_decap();
-            if (hdr.pwospf.isValid()){
+            
+            if (hdr.cpu_metadata.dstPort != 0){
+                cpu_meta_decap();
                 return;
             }
+            cpu_meta_decap();
         }
 
         if ((hdr.pwospf.isValid() || hdr.arp.isValid()) && standard_metadata.ingress_port != CPU_PORT) {
             send_to_cpu();
+            if(hdr.arp.isValid()){
+                arp_counter.count((bit<32>) 1);
+            }
             return;
         }
         else if (hdr.ipv4.isValid()) {
+            ip_counter.count((bit<32>) 1);
             if (hdr.ipv4.ttl < 1) {
                 drop();
-                // ICMP timeout
+                // ICMP Time Exceeded
             } else {
                 hdr.ipv4.ttl = hdr.ipv4.ttl - 1;
             }
@@ -278,7 +289,9 @@ control MyIngress(inout headers hdr,
             }
 
             // attempts to find next-hop ip and port
-            routing_table.apply();
+            if (routing_table.apply().hit && !hdr.cpu_metadata.isValid() && next_hop_ip_addr == 32w0) {
+                return;
+            }
             arp_table.apply();
             return;
         }else if (hdr.ethernet.isValid()) {

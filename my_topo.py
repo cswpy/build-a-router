@@ -127,7 +127,10 @@ class RingTopo(Topo):
         intf_num=int(intf_name.split("eth")[-1])
         assert sw_num >= 0 and sw_num <= 255, "Invalid switch number"
         assert intf_num >= 0 and intf_num <= 255, "Invalid interface number"
-        ip_addr="10.0.{}.{}".format(intf_num, sw_num)
+        if intf_num == 1:
+            ip_addr="10.0.101.{}".format(sw_num)
+        else:
+            ip_addr="10.0.{}.{}".format(intf_num, sw_num)
         return ip_addr
 
     def __str__(self):

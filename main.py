@@ -100,9 +100,13 @@ net, switches, controllers = test_ring_topo(6, 3, extra_links)
 # print(h3.cmd("ping -c1 10.0.0.1"))
 
 # These table entries were added by the CPU:
-for sw in switches:
-    sw.printTableEntries()
+# for sw in switches:
+#     sw.printTableEntries()
 
+h1_2 = net.get("h1-2")
+print(h1_2.cmd("ping -c1 10.0.103.1"))
+
+switches[0].printTableEntries()
 
 cnt = 0
 while cnt < 5:
