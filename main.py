@@ -5,9 +5,9 @@ from my_topo import SingleSwitchTopo, DoubleSwitchTopo, RingTopo
 import time
 
 
-def test_ring_topo(num_switch=2, num_host=3):
+def test_ring_topo(num_switch=2, num_host=3, extra_links=[]):
 
-    topo = RingTopo(num_switch, num_host)
+    topo = RingTopo(num_switch, num_host, extra_links)
 
     print(topo)
 
@@ -29,13 +29,16 @@ def test_ring_topo(num_switch=2, num_host=3):
             action_params={"mgid": bcast_mgid},
         )
 
-        # ipv4 static routing table
-        sw.insertTableEntry(
-            table_name="MyIngress.local_ip_table",
-            match_fields={"hdr.ipv4.dstAddr": [topo.get_ip_addr("%s-eth1" % sw_name)]},
-            action_name="send_to_cpu",
-            action_params={},
-        )   
+        # local ip table static entries
+        for intf_name in sw.intfNames():
+            if 'lo' in intf_name:
+                continue
+            sw.insertTableEntry(
+                table_name="MyIngress.local_ip_table",
+                match_fields={"hdr.ipv4.dstAddr": [topo.get_ip_addr(intf_name)]},
+                action_name="send_to_cpu",
+                action_params={},
+            )
         switches.append(sw)
     controllers = []
     # Start the MAC learning controller
@@ -84,7 +87,8 @@ def test_single_topo():
     # These table entries were added by the CPU:
     sw.printTableEntries()
 
-net, switches, controllers = test_ring_topo(2, 3)
+extra_links = [('s2', 's4'), ('s4', 's6')]
+net, switches, controllers = test_ring_topo(6, 3, extra_links)
 
 
 #h1_2, h1_3=net.get("h1-2"), net.get("h1-3")
@@ -97,6 +101,15 @@ net, switches, controllers = test_ring_topo(2, 3)
 
 # These table entries were added by the CPU:
 for sw in switches:
-    sw.printTableEntries() 
+    sw.printTableEntries()
+
+
+cnt = 0
+while cnt < 5:
+    print("Main thread sleeping for 5 seconds")
+    time.sleep(5)
+    print("Main thread resumes")
+    controllers[1].print_state()
+    cnt+=1
 
 

@@ -33,7 +33,7 @@ def build_graph(adjacency_list):
     return graph
 
 def find_next_hop(graph, start):
-    '''djikstra algorithm to find shortest path and then find the next hop for each node, weightes are omitted'''
+    '''dijkstra algorithm to find shortest path and then find the next hop for each node, weightes are omitted'''
     distances = {node: float('inf') for node in graph}
     distances[start] = 0
     pq = [(0, start)]
