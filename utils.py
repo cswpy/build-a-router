@@ -3,13 +3,20 @@ from collections import defaultdict, namedtuple
 
 LSA_tuple = namedtuple('LSA_tuple', ['subnet', 'mask', 'neighbor_rid'])
 
-def get_ip_addr(intf_name):
-    sw_num = int(intf_name[1:].split("-")[0])
-    intf_num = int(intf_name.split("eth")[-1])
-    assert sw_num >= 0 and sw_num <= 255, "Invalid switch number"
-    assert intf_num >= 0 and intf_num <= 255, "Invalid interface number"
-    ip_addr = "10.0.{}.{}".format(sw_num, intf_num)
-    return ip_addr
+def get_ip_from_ip_subnet(ip_subnet):
+    return ip_subnet.split("/")[0]
+
+def get_mask_from_ip_subnet(ip_subnet):
+    '''turns prefix length to mask'''
+    prefix_len = int(ip_subnet.split("/")[1])
+    return prefix_len_to_mask(prefix_len)
+
+def prefix_len_to_mask(prefix_len):
+    '''turns prefix length to mask'''
+    mask = [0, 0, 0, 0]
+    for i in range(prefix_len):
+        mask[i // 8] |= 1 << (7 - i % 8)
+    return '.'.join(map(str, mask))
 
 def calculate_subnet(ip_addr, mask):
     # assume both ip_addr and mask are strings in the form of IP addresses

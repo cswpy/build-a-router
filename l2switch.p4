@@ -184,11 +184,11 @@ control MyIngress(inout headers hdr,
         next_hop_ip_addr = next_hop;
     }
 
-    action ipv4_fwd(macAddr_t mac, port_t port) {
-        hdr.ethernet.srcAddr = hdr.ethernet.dstAddr;
-        hdr.ethernet.dstAddr = mac;
-        standard_metadata.egress_spec = port;
-    }
+    // action ipv4_fwd(macAddr_t mac, port_t port) {
+    //     hdr.ethernet.srcAddr = hdr.ethernet.dstAddr;
+    //     hdr.ethernet.dstAddr = mac;
+    //     standard_metadata.egress_spec = port;
+    // }
 
     action arp_table_match(macAddr_t mac) {
         hdr.ethernet.dstAddr = mac;
@@ -201,13 +201,11 @@ control MyIngress(inout headers hdr,
         }
         actions = {
             ipv4_route;
-            ipv4_fwd;
             drop;
-            send_to_cpu;
             NoAction;
         }
         size = 1024;
-        default_action = send_to_cpu();
+        default_action = NoAction;
     }
     // find the mac addr based on next-hop addr
     // If not found, send to CPU so that CPU can send an ARP request
@@ -222,7 +220,7 @@ control MyIngress(inout headers hdr,
             NoAction;
         }   
         size = 64;
-        default_action = send_to_cpu();
+        default_action = NoAction;
     }
 
     // forward any packets with matching ip addr to CPU
@@ -247,11 +245,12 @@ control MyIngress(inout headers hdr,
         actions = {
             set_egr;
             set_mgid;
+            send_to_cpu;
             drop;
             NoAction;
         }
         size = 1024;
-        default_action = drop();
+        default_action = send_to_cpu();
     }
 
 
@@ -289,12 +288,12 @@ control MyIngress(inout headers hdr,
             }
 
             // attempts to find next-hop ip and port
-            if (routing_table.apply().hit && !hdr.cpu_metadata.isValid() && next_hop_ip_addr == 32w0) {
+            if (routing_table.apply().hit) {
+                arp_table.apply();
                 return;
             }
-            arp_table.apply();
-            return;
-        }else if (hdr.ethernet.isValid()) {
+        }
+        if (hdr.ethernet.isValid()) {
             fwd_l2.apply();
         }
 

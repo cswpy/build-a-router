@@ -1,13 +1,13 @@
 from p4app import P4Mininet
 
 from controller import MacLearningController
-from my_topo import SingleSwitchTopo, DoubleSwitchTopo, RingTopo
+from my_topo import SingleSwitchTopo, DoubleSwitchTopo, RingTopo, LineTopo
 import time
 
 
-def test_ring_topo(num_switch=2, num_host=3, extra_links=[]):
+def test_topo(TopoCls, num_switch=2, num_host=3, extra_links=[]):
 
-    topo = RingTopo(num_switch, num_host, extra_links)
+    topo = TopoCls(num_switch, num_host, extra_links)
 
     print(topo)
 
@@ -19,7 +19,8 @@ def test_ring_topo(num_switch=2, num_host=3, extra_links=[]):
     for sw_ind in range(1, topo.num_switch+1):
         sw_name = "s%d" % sw_ind
         sw = net.get(sw_name)
-        sw.addMulticastGroup(mgid=bcast_mgid, ports=range(2, num_host + 1))
+        ports = [port for port in sw.ports.values() if port > 1]
+        sw.addMulticastGroup(mgid=bcast_mgid, ports=ports)
 
         # Send MAC bcast packets to the bcast multicast group
         sw.insertTableEntry(
@@ -48,72 +49,30 @@ def test_ring_topo(num_switch=2, num_host=3, extra_links=[]):
         cpu.start()
         controllers.append(cpu)
 
-    return net, switches, controllers
-
-def test_single_topo():
-    # Add three hosts. Port 1 (h1) is reserved for the CPU.
-    N=3
-
-    topo=SingleSwitchTopo(N)
-    net=P4Mininet(program="l2switch.p4", topo=topo, auto_arp=False)
-    net.start()
-
-    # Add a mcast group for all ports (except for the CPU port)
-    bcast_mgid=1
-    sw=net.get("s1")
-    sw.addMulticastGroup(mgid=bcast_mgid, ports=range(2, N + 1))
-
-    # Send MAC bcast packets to the bcast multicast group
-    sw.insertTableEntry(
-        table_name="MyIngress.fwd_l2",
-        match_fields={"hdr.ethernet.dstAddr": ["ff:ff:ff:ff:ff:ff"]},
-        action_name="MyIngress.set_mgid",
-        action_params={"mgid": bcast_mgid},
-    )
-
-    for intf in sw.intfList():
-        print(intf.name, intf.IP(), intf.MAC())
-
-    # Start the MAC learning controller
-    cpu=MacLearningController(sw)
-    cpu.start()
-
-    h2, h3=net.get("h2"), net.get("h3")
-
-    print(h2.cmd("arping -c1 10.0.0.3"))
-
-    print(h3.cmd("ping -c1 10.0.0.2"))
-
-    # These table entries were added by the CPU:
-    sw.printTableEntries()
-
-extra_links = [('s2', 's4'), ('s4', 's6')]
-net, switches, controllers = test_ring_topo(6, 3, extra_links)
+    return topo, net, switches, controllers
 
 
-#h1_2, h1_3=net.get("h1-2"), net.get("h1-3")
+extra_links = []
+#extra_links = [('s2', 's4'), ('s4', 's6')]
+topo, net, switches, controllers = test_topo(LineTopo, 5, 3, extra_links)
 
-# print(h1_2.cmd("arping -c1 10.0.1.103"))
-
-#print(h1_3.cmd("ping -c1 10.0.1.102"))
-
-# print(h3.cmd("ping -c1 10.0.0.1"))
-
-# These table entries were added by the CPU:
-# for sw in switches:
-#     sw.printTableEntries()
-
+for host_name in topo.host_names:
+    if 'cpu' not in host_name:
+        host = net.get(host_name)
+        host.cmd("ip route add default {}".format(topo.nodeInfo(host_name)['defaultRoute']))
 h1_2 = net.get("h1-2")
-print(h1_2.cmd("ping -c1 10.0.103.1"))
+h5_3 = net.get("h5-3")
 
+time.sleep(10) # wait for routing to kick in
+
+controllers[0].print_state()
+controllers[4].print_state()
+print(h1_2.cmd("ip route"))
+print(h5_3.cmd("ip route"))
 switches[0].printTableEntries()
 
-cnt = 0
-while cnt < 5:
-    print("Main thread sleeping for 5 seconds")
-    time.sleep(5)
-    print("Main thread resumes")
-    controllers[1].print_state()
-    cnt+=1
+print(h1_2.cmd("ping -c1 10.0.5.103"))
 
-
+# s1-eth2-in -> s1-eth5-out -> s5-eth5-in -> s5-eth3-out
+for controller in controllers:
+    controller.join()

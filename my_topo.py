@@ -55,102 +55,116 @@ class DoubleSwitchTopo(Topo):
             self.addLink(host, switch2, port2=i)
         self.addLink(switch1, switch2, port1=n+1, port2=n+1)
 
-
-class RingTopo(Topo):
+class CommonTopo(Topo):
     def __init__(self, num_switch, num_host, extra_links=[], **opts):
-        Topo.__init__(self, **opts)
+        super(CommonTopo, self).__init__(**opts)
         self.num_switch = num_switch
         self.num_host = num_host
         self.extra_links = extra_links
-        self.sw_to_node_port = defaultdict(list)
+        #self.link_order = defaultdict(set) # used to keep the order of links -> create unique network addr for links
+        
+        assert num_host > 1, "At least 2 hosts are required"
 
-        switches = [self.addSwitch("s%d" % i)
+        self.switch_names = [self.addSwitch("s%d" % i)
                     for i in range(1, num_switch + 1)]
+        
+        self.host_names = []
 
         for sw_ind in range(1, num_switch + 1):
-            sw = switches[sw_ind - 1]
+            sw = self.switch_names[sw_ind - 1]
             for host_ind in range(1, num_host + 1):
-                host = self.addHost("h%d-%d" % (sw_ind, host_ind), ip="10.0.%d.%d" % (
-                    100+host_ind, sw_ind), mac="00:00:00:00:%02x:%02x" % (sw_ind, host_ind))
+                host_name = "cpu%d" % (sw_ind) if host_ind == 1 else "h%d-%d" % (sw_ind, host_ind)
+                host_id = 1 if host_ind == 1 else host_ind+100
+                host = self.addHost(host_name, ip="10.0.%d.%d/24" % (
+                    sw_ind, host_id), mac="00:00:00:00:%02x:%02x" % (sw_ind, host_ind), defaultRoute="via 10.0.%d.1" % sw_ind)
                 self.addLink(host, sw, port2=host_ind)
-                self.sw_to_node_port[sw].append((host, host_ind))
-        port = num_host + 1
-        # handle special cases in Ring topology
-        if num_switch == 1:
-            return
-        elif num_switch == 2:
-            self.addLink(switches[0], switches[1], port1=port, port2=port)
-            self.sw_to_node_port[switches[0]].append((switches[1], port))
-            self.sw_to_node_port[switches[1]].append((switches[0], port))
-            return
-        for sw_ind in range(1, num_switch + 1):
-            self.addLink(switches[sw_ind - 1], switches[sw_ind %
-                         num_switch], port1=port, port2=port)
-            self.sw_to_node_port[switches[sw_ind - 1]
-                ].append((switches[sw_ind % num_switch], port))
-            self.sw_to_node_port[switches[sw_ind % num_switch]
-                ].append((switches[sw_ind - 1], port))
-            port += 1
+                self.host_names.append(host_name)
+    
+    # def addLink(self, *args, **kwargs):
+    #     port = max(self.link_order.values()) + 1
+    #     super().addLink(*args, port1=port, port2=port, **kwargs)
+    #     self.link_order[args[0]] = port
 
-        for node1, node2 in extra_links:
+
+    def _setup_extra_links(self):
+        for node1, node2 in self.extra_links:
             assert node1.startswith("s") and node2.startswith(
                 "s"), "Extra links with hosts not supported"
-            assert node1 in switches and node2 in switches, "Invalid switch names"
+            assert node1 in self.switch_names and node2 in self.switch_names, "Invalid switch names"
             if (node1, node2) not in self.links():
-                self.addLink(node1, node2, port1=port, port2=port)
-                self.sw_to_node_port[node1].append((node2, port))
-                self.sw_to_node_port[node2].append((node1, port))
+                self.addLink(node1, node2)
 
-            port += 1
+    # def addLink(self, *args, **kwargs):
+    #     host = super().addLink(*args, **kwargs)
+    #     if args[0].startwith('s') and "port1" in kwargs:
+    #         intf_name = "%s-eth%d" % (args[0], kwargs["port1"])
+    #         self.intf_info[args[0]].append((intf_name, self.get_ip_mask(intf_name)))
+    #     if args[1].startwith('s') and "port2" in kwargs:
+    #         intf_name = "%s-eth%d" % (args[1], kwargs["port2"])
+    #         self.intf_info[args[1]].append((args[1], self.get_ip_mask(intf_name)))
+    #     return host
+
+    def get_ip_mask(self, intf_name):
+        if intf_name.startswith('cpu') or intf_name.startswith('h'):
+            return self.nodeInfo(intf_name)['ip']
+        sw_num=int(intf_name[1:].split("-")[0])
+        port_num=int(intf_name.split("eth")[-1])
+        assert sw_num >= 0 and sw_num <= 255, "Invalid switch number"
+        assert port_num >= 0 and port_num <= 255, "Invalid interface number"
+        # ip for intfs with hosts and cpu
+        if port_num <= self.num_host:
+            ip_subnet="10.0.{}.{}/24".format(sw_num, port_num)
+        # ip for intfs between routers
+        else:
+            ip_subnet="192.168.{}.{}/16".format(sw_num, port_num)
+        return ip_subnet
+    
+    def get_ip_addr(self, intf_name):
+        return self.get_ip_mask(intf_name).split("/")[0]
 
     def get_sw_intfs_info(self, sw_name):
         '''Get the interfaces info of a switch'''
         assert sw_name.startswith("s"), "Invalid switch name"
         sw_num = int(sw_name[1:])
         assert sw_num >= 1 and sw_num <= self.num_switch, "Invalid switch number"
+        sw_ports = self.ports[sw_name]
         intfs_info = {}
-        # portn = 1
-        # while portn <= self.num_host + self.num_switch:
-        #     intf_name = "%s-eth%d" % (sw_name, i)
-        #     intfs_info[intf_name] = (
-        #         self.get_ip_addr(intf_name), "255.255.0.0")
-        #     portn += 1
-        for _, portn in self.sw_to_node_port[sw_name]:
+        for portn, (_, _) in sw_ports.items():
             intf_name = "%s-eth%d" % (sw_name, portn)
-            intfs_info[intf_name] = (
-                self.get_ip_addr(intf_name), "255.255.255.0")
+            intfs_info[intf_name] = self.get_ip_mask(intf_name)
         return intfs_info
-
-    def get_ip_addr(self, intf_name):
-        '''Should only be used to get the IP addr for interfaces'''
-        sw_num=int(intf_name[1:].split("-")[0])
-        intf_num=int(intf_name.split("eth")[-1])
-        assert sw_num >= 0 and sw_num <= 255, "Invalid switch number"
-        assert intf_num >= 0 and intf_num <= 255, "Invalid interface number"
-        if intf_num == 1:
-            ip_addr="10.0.101.{}".format(sw_num)
-        else:
-            ip_addr="10.0.{}.{}".format(intf_num, sw_num)
-        return ip_addr
-
+    
     def __str__(self):
         resp="************ TOPOLOGY ************\n"
         for host in self.hosts():
             resp += "Host: %s\t%s\n" % (host, self.nodeInfo(host))
         resp += "************ LINKS **************\n"
-        for switch in self.switches():
-            for link in self.links(withInfo=True):
-                if switch in link and link[0].startswith("s") and link[1].startswith("s"):
-                    portn = None
-                    for sw_name, port in self.sw_to_node_port[link[0]]:
-                        if sw_name == link[1]:
-                            portn = port
-                            break
-                    assert portn is not None, "Invalid link"
-                    intf0_name = "%s-eth%d" % (link[0], portn)
-                    intf1_name = "%s-eth%d" % (link[1], portn)
-                    resp += "%s (IP: %s)  -- %s (IP: %s)\n" % (link[0], self.get_ip_addr(intf0_name), link[1], self.get_ip_addr(intf1_name))
-                elif switch in link:
-                    resp += "%s -- %s\n" % (link[0], link[1])
+        for switch_name in self.switch_names:
+            for port, (dst_name, dst_port) in self.ports[switch_name].items():
+                intf0_name = "%s-eth%d" % (switch_name, port)
+                intf1_name = "%s-eth%d" % (dst_name, dst_port) if dst_name in self.switch_names else dst_name
+                resp += "%s (IP: %s port: %s)  -- %s (IP: %s port: %s)\n" % (switch_name, self.get_ip_mask(intf0_name), port, dst_name, self.get_ip_mask(intf1_name), dst_port)
         resp += "*********************************\n"
         return resp
+
+class RingTopo(CommonTopo):
+    def __init__(self, num_switch, num_host, extra_links=[], **opts):
+        super(RingTopo, self).__init__(num_switch, num_host, extra_links, **opts)
+        # handle special cases in Ring topology
+        if num_switch == 1:
+            return
+        elif num_switch == 2:
+            self.addLink(self.switch_names[0], self.switch_names[1])
+
+            return
+        for sw_ind in range(1, num_switch + 1):
+            self.addLink(self.switch_names[sw_ind - 1], self.switch_names[sw_ind %
+                         num_switch])
+        self._setup_extra_links()
+
+class LineTopo(CommonTopo):
+    def __init__(self, num_switch, num_host, extra_links=[], **opts):
+        super().__init__(num_switch, num_host, **opts)
+        for sw_ind in range(1, num_switch):
+            self.addLink(self.switch_names[sw_ind - 1], self.switch_names[sw_ind])
+        self._setup_extra_links()
