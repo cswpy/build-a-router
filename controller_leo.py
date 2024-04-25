@@ -6,10 +6,10 @@ from collections import Counter, defaultdict
 from scapy.all import Ether, IP, ARP, ICMP, sendp, Raw  # type: ignore
 from threading import Thread, Event
 
-from utils.async_sniff import sniff
-from utils.cpu_metadata import CPUMetadata
-from utils.utils_leo import *
-from utils.pwospf_leo import *
+from async_sniff import sniff
+from cpu_metadata import CPUMetadata
+from utils import *
+from pwospf import *
 
 # constants
 ARP_OP_REQ = 0x0001
@@ -97,25 +97,17 @@ class RouterController(Thread):
 
     def addMacAddr(self, mac, port):
         # Don't re-add the mac-port mapping if we already have it:
-        # if mac in self.port_for_mac and self.port_for_mac[mac] == port:
         if mac in self.port_for_mac:
             return
 
-        # if mac in self.port_for_mac:
-        #     if self.port_for_mac[mac] != port:  # TODO: add update later
-        #         self.rt.removeTableEntry(
-        #             table_name="MyIngress.fwd_l2",
-        #             match_fields={"hdr.ethernet.dst_mac": [mac]},
-        #         )
+        # TODO: add update later
 
-        # print("add 2")
         self.rt.insertTableEntry(
             table_name="MyIngress.fwd_l2",
             match_fields={"hdr.ethernet.dst_mac": [mac]},
             action_name="MyIngress.set_egr",
             action_params={"port": port},
         )
-        # print("add 2 done")
 
         self.port_for_mac[mac] = port
 
@@ -127,19 +119,19 @@ class RouterController(Thread):
             # this is for me
             self.addMacAddr(pkt[ARP].hwsrc, pkt[CPUMetadata].srcPort)
             self.addArp(pkt[ARP].psrc, pkt[ARP].hwsrc)
-            print("received!")
+            # print("received!")
             with self.cv:
                 self.cv.notify()
             return
 
         if arp_layer.hwsrc == self.cpu_mac:
-            print("received my own arp, dropping")
+            # print("received my own arp, dropping")
             assert arp_layer.psrc == self.cpu_ip
             return
 
         for _, iface in self.ifaces.items():
             if arp_layer.hwsrc == iface.mac:
-                print("received my own arp, dropping")
+                # print("received my own arp, dropping")
                 assert arp_layer.psrc == iface.ip
                 return
 
@@ -148,13 +140,13 @@ class RouterController(Thread):
         self.addArp(pkt[ARP].pdst, pkt[ARP].hwdst)
 
         if (pkt[ARP].hwdst) == self.cpu_mac:
-            print("this is an arp for me, dropping")
+            # print("this is an arp for me, dropping")
             assert arp_layer.pdst == self.cpu_ip
             return
 
         for _, iface in self.ifaces.items():
             if arp_layer.hwdst == iface.mac:
-                print("this is an arp for me, dropping")
+                # print("this is an arp for me, dropping")
                 assert arp_layer.pdst == iface.ip
                 return
 
@@ -170,34 +162,18 @@ class RouterController(Thread):
 
         assert False
 
-        # if pkt[ARP].hwdst in self.port_for_mac:
-        # pkt[CPUMetadata].dstPort = 0
-        # print("set port: ", self.port_for_mac[pkt[ARP].hwdst])
-        # print("port_for_mac: ", self.port_for_mac)
-        # else:
-        #     best_match, next_port = longest_prefix_match(
-        #         ip_to_int(pkt[ARP].pdst), self.routing_table
-        #     )
-        #     print("ip:", pkt[ARP].pdst, "dst port:", next_port)
-        #     pkt[CPUMetadata].dstPort = next_port
-        #     print("relayed arp response to", next_port)
-        #     # pkt.show2()
-        # print("invoked 4")
-        # self.send(pkt)
-
     def handleArpRequest(self, pkt):
-
         ether_layer = pkt[Ether]
         arp_layer = pkt[ARP]
 
         if arp_layer.hwsrc == self.cpu_mac:
-            print("received my own arp, dropping")
+            # print("received my own arp, dropping")
             assert arp_layer.psrc == self.cpu_ip
             return
 
         for _, iface in self.ifaces.items():
             if arp_layer.hwsrc == iface.mac:
-                print("received my own arp, dropping")
+                # print("received my own arp, dropping")
                 assert arp_layer.psrc == iface.ip
                 return
 
@@ -212,7 +188,6 @@ class RouterController(Thread):
                 return
 
             if arp_layer.pdst == self.cpu_ip:
-                # These are done also by the hardware
                 # send the packet back to sender
                 ether_layer.dst = ether_layer.src
                 ether_layer.src = self.cpu_mac
@@ -227,12 +202,10 @@ class RouterController(Thread):
                 pkt[CPUMetadata].fromCpu = 1
 
                 self.send(pkt)
-                # print("invoked 1")
                 return
 
             for _, iface in self.ifaces.items():
                 if iface.ip == arp_layer.pdst:
-                    # These are done also by the hardware
                     # send the packet back to sender
                     ether_layer.dst = ether_layer.src
                     ether_layer.src = iface.mac
@@ -246,34 +219,20 @@ class RouterController(Thread):
                     pkt[CPUMetadata].dstPort = pkt[CPUMetadata].srcPort
                     pkt[CPUMetadata].fromCpu = 1
 
-                    # print("invoked 2")
                     self.send(pkt)
                     return
 
             # The case that I am just a rely
 
-            # print("relayed out arp request: ")
-            # hashed_arp = hash_arp_packet(pkt)
-            # if (
-            #     hashed_arp in self.arp_request_packets_seen
-            #     and self.arp_request_packets_seen[hashed_arp] > 3
-            # ):
-            #     # print("too many dup requests, dropped")
-            #     return
-            # else:
-            #     self.arp_request_packets_seen[hashed_arp] += 1
-
             src_port = pkt[CPUMetadata].srcPort
             if not pkt[Ether].dst == "ff:ff:ff:ff:ff:ff":
                 print("dropped arp req forwarded by host")
-                # pkt.show2()
                 return
             # assert pkt[Ether].dst == "ff:ff:ff:ff:ff:ff"
             for port, iface in self.ifaces.items():
                 if port == src_port:
                     continue
                 pkt[CPUMetadata].dstPort = port
-                # print("invoked 3")
                 self.send(pkt)
 
             self.arpReq_from_mac_seen.add(
@@ -289,8 +248,7 @@ class RouterController(Thread):
         if ip_layer.dst not in [iface.ip for iface in self.ifaces.values()] + [
             self.cpu_ip
         ]:
-            # TODO: send arp?
-
+            # send arp
             if not self.arp_cache.has_entry(pkt[IP].dst):
                 cpu_meta = CPUMetadata(
                     fromCpu=1,
@@ -325,7 +283,7 @@ class RouterController(Thread):
                         self.send(response_frame)
 
                 threading.Thread(
-                    target=self.waitAndSendArpRequest,
+                    target=self.wait_and_send_arp_request,
                     args=(pkt),
                 ).start()
                 return
@@ -335,8 +293,7 @@ class RouterController(Thread):
             target_mac = self.arp_cache.get_mac(pkt[IP].dst)
 
             if target_mac is not None:
-                print("got it, nice")
-                # pkt.show2()
+                # print("got it, nice")
                 # forward the packet
                 pkt[CPUMetadata].dstPort = self.port_for_mac[target_mac]
                 pkt[Ether].dst = target_mac
@@ -345,64 +302,12 @@ class RouterController(Thread):
 
                 return
             else:
-                print("generate bad response")
-                # Modify Ethernet Layer
-                pkt[Ether].dst = pkt[Ether].src
-                pkt[Ether].src = self.cpu_mac
-
-                pkt[IP].chksum = None
-                pkt[IP].ttl = 64
-
-                # Extract the original IP header and the first 8 bytes of the payload
-                original_ip_header = pkt[IP].copy()
-                original_ip_header.len = None  # Let Scapy recalculate
-                payload_start = bytes(pkt[IP].payload)[:8]
-                icmp_payload = original_ip_header / Raw(load=payload_start)
-
-                # Create ICMP Host Unreachable message
-                icmp = ICMP(type=3, code=1)
-                icmp.chksum = None  # Start with no checksum
-
-                # Full ICMP message as bytes for checksum calculation
-                full_icmp_message = bytes(icmp) + bytes(icmp_payload)
-                full_icmp_message = (
-                    full_icmp_message[:2] + b"\x00\x00" + full_icmp_message[4:]
-                )  # Zero checksum field for calculation
-
-                # Calculate and set ICMP checksum
-                # computed_checksum = checksum(full_icmp_message)
-                # icmp.chksum = computed_checksum  # Update checksum field
-
-                # Update the packet's ICMP layer
-                pkt[ICMP] = icmp / icmp_payload
-
-                # Metadata and sending (if used in your setup)
-                pkt[CPUMetadata].fromCpu = 1
-                pkt[CPUMetadata].dstPort = pkt[CPUMetadata].srcPort
-                pkt[CPUMetadata].srcPort = 1
-
-                pkt[IP].dst = pkt[IP].src
-                pkt[IP].src = self.cpu_ip
-
-                pkt[ICMP].chksum = None
-                pkt[ICMP].chksum = 0x3D4D
-
-                # print("whole packet: \n", bytes(pkt))
-                # print("icmp: \n", bytes(pkt[ICMP]))
-                # print("icmp data: \n", pkt[ICMP])
-                # print("hex: \n", bytes(pkt[ICMP]).hex())
-
-                # Display and send the packet
-                # pkt.show2()
-                self.send(pkt)
-                return
+                # shouldn't really be reached, else should generate unrechable
+                assert False
 
         # Recevied ICMP destined for me
-        # assert False
 
-        # print("here")
-
-        # # Create ICMP Echo Reply
+        # Create ICMP Echo Reply
         echo_reply = (
             IP(src=ip_layer.dst, dst=ip_layer.src)
             / ICMP(type=0, id=icmp_layer.id, seq=icmp_layer.seq)
@@ -465,19 +370,17 @@ class RouterController(Thread):
                 return
 
             if ICMP in pkt:
-                # pkt.show2()
                 # Check if it's an ICMP Echo Request
                 if pkt[ICMP].type == 8 and pkt[ICMP].code == 0:
                     # print("Handling ICMP Echo Request")
                     self.handleIcmpRequest(pkt)
 
                 if pkt[ICMP].type == 0 and pkt[ICMP].code == 0:
-                    #
                     print("here..........")
-
-                # return
+                    assert False
 
                 # else, no idea what to do, drop
+                return
 
             # TODO: think
             # case that ARP timed out
@@ -511,7 +414,16 @@ class RouterController(Thread):
 
                 time.sleep(0.3)
 
+                print("REALLY SHOULDN'T BE HERE! ARP TURNED OFF!")
+
             # Then you can do what ever you want
+            target_mac = self.arp_cache.get_mac(pkt[IP].dst)
+            icmp_layer = pkt[ICMP]
+
+            if target_mac is not None:
+                print("could do something, but shouldn't be here")
+            else:
+                print("BAD UNREACHABLE, should let know")
 
     def send(self, *args, **override_kwargs):
         pkt = args[0]
@@ -633,21 +545,7 @@ class RouterController(Thread):
 
             if router_id in self.routing_table:
                 if next_hop_ip != self.routing_table[router_id][0]:
-                    # item changed
-                    # self.rt.removeTableEntry(
-                    #     table_name="MyIngress.routing_table",
-                    #     match_fields={"ip_to_match": [router_id, 32]},
-                    # )
-
-                    # self.rt.insertTableEntry(
-                    #     table_name="MyIngress.routing_table",
-                    #     match_fields={"ip_to_match": [router_id, 32]},
-                    #     action_name="MyIngress.ipv4_route",
-                    #     action_params={
-                    #         "dst_ip": next_hop_ip,
-                    #         "egress_port": next_hop_port,
-                    #     },
-                    # )
+                    # item changed TODO: update?
                     self.routing_table[router_id] = (next_hop_ip, next_hop_port)
                 else:
                     # In and previous Same, do nothing
@@ -660,7 +558,6 @@ class RouterController(Thread):
                 if router_subnet != self.subnet and (
                     router_subnet not in self.router_subnets
                 ):
-                    # print("add 3")
                     self.rt.insertTableEntry(
                         table_name="MyIngress.routing_table",
                         match_fields={"ip_to_match": [router_subnet, 16]},  # change
@@ -670,16 +567,10 @@ class RouterController(Thread):
                             "egress_port": next_hop_port,
                         },
                     )
-                    # print("add 3 don3")
 
                     self.router_subnets.add(router_subnet)
 
-                # self.rt.insertTableEntry(
-                #     table_name="MyIngress.routing_table",
-                #     match_fields={"ip_to_match": [router_id, 32]},
-                #     action_name="MyIngress.ipv4_route",
-                #     action_params={"dst_ip": next_hop_ip, "egress_port": next_hop_port},
-                # )
+                # previously inserting all subnets in here
                 self.routing_table[router_id] = (next_hop_ip, next_hop_port)
 
         return finished
@@ -722,7 +613,6 @@ class RouterController(Thread):
             # print("dropped4")
             return
 
-        # print("received HELLO")
         if pw.router_id == self.router_id:
             print("really shouldn't be here... received PWOSPF HELLO from myself...")
             return
@@ -803,20 +693,16 @@ class RouterController(Thread):
         self.lsuFloodPkt(pkt, ip_to_int(pkt[LSU].lsaList[0].subnet))
         return
 
-    def waitAndSendArpRequest(self, pkt):
-
+    def wait_and_send_arp_request(self, pkt):
         # We could also simply just wait here
 
         with self.cv:
             self.cv.wait(1.0)
-        print("we are here", time.time())
 
         target_mac = self.arp_cache.get_mac(pkt[IP].dst)
-        icmp_layer = pkt[ICMP]
 
         if target_mac is not None:
-            print("got it, nice")
-            # pkt.show2()
+            # print("got it, nice")
             # forward the packet
             pkt[CPUMetadata].dstPort = self.port_for_mac[target_mac]
             pkt[Ether].dst = target_mac
@@ -847,9 +733,9 @@ class RouterController(Thread):
                 full_icmp_message[:2] + b"\x00\x00" + full_icmp_message[4:]
             )  # Zero checksum field for calculation
 
-            # Calculate and set ICMP checksum
-            # computed_checksum = checksum(full_icmp_message)
-            # icmp.chksum = computed_checksum  # Update checksum field
+            # Calculate and set ICMP checksum (incorrect)
+            #   computed_checksum = checksum(full_icmp_message)
+            #   icmp.chksum = computed_checksum  # Update checksum field
 
             # Update the packet's ICMP layer
             pkt[ICMP] = icmp / icmp_payload
@@ -865,13 +751,12 @@ class RouterController(Thread):
             pkt[ICMP].chksum = None
             pkt[ICMP].chksum = 0x3D4D
 
-            # print("whole packet: \n", bytes(pkt))
-            # print("icmp: \n", bytes(pkt[ICMP]))
-            # print("icmp data: \n", pkt[ICMP])
-            # print("hex: \n", bytes(pkt[ICMP]).hex())
+            # Packet logging, maybe useful for later
+            #     print("whole packet: \n", bytes(pkt))
+            #     print("icmp: \n", bytes(pkt[ICMP]))
+            #     print("icmp data: \n", pkt[ICMP])
+            #     print("hex: \n", bytes(pkt[ICMP]).hex())
 
-            # Display and send the packet
-            # pkt.show2()
             self.send(pkt)
             return
 
