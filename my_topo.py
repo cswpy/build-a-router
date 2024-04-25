@@ -1,6 +1,7 @@
 import ipaddress
 from mininet.topo import Topo
-from utils import extract_ip_mask, get_trailing_number
+from utils.utils_leo import extract_ip_mask, get_trailing_number, int_to_ip
+from utils.utils_phill import mask_to_prefix_len
 
 
 class SingleSwitchTopo(Topo):
@@ -93,9 +94,12 @@ class WrapperTopo(Topo):
         assert sw_name in self.router_info, "Invalid switch name"
         sw_port_ips_macs = self.router_info[sw_name]["port_ips_macs"]
         intfs_info = {}
+        intfs_info[sw_name + "-eth1"] = self.router_info[sw_name]["cpu_ip"] + "/" + str(
+            mask_to_prefix_len(int_to_ip(self.router_info[sw_name]["netmask"]))
+        )
         for portn, port_info in sw_port_ips_macs.items():
             intf_name = "%s-eth%d" % (sw_name, portn)
-            intfs_info[intf_name] = port_info['ip'] + '/' + port_info['mask'].prefixlen
+            intfs_info[intf_name] = port_info['ip'] + '/' + str(mask_to_prefix_len(port_info['mask']))
         return intfs_info
 
 class SingleRouterTopo(WrapperTopo):
@@ -141,22 +145,65 @@ class DoubleRouterTopo(WrapperTopo):
         }
 
 class LineTopo(WrapperTopo):
-    def __init__(self, n, **opts):
+    def __init__(self, **opts):
         WrapperTopo.__init__(self, **opts)
 
         router1 = self.init_router(1, "10.0.1.0/16")
         router2 = self.init_router(2, "10.0.2.0/16")
-        router3 = self.init_router(3, "10.0.3.0/16")
-        router4 = self.init_router(4, "10.0.4.0/16")
+        #router3 = self.init_router(3, "10.0.3.0/16")
+        #router4 = self.init_router(4, "10.0.4.0/16")
 
         self.router_info[router1]["port_ips_macs"] = {}
         self.router_info[router2]["port_ips_macs"] = {}
-        self.router_info[router3]["port_ips_macs"] = {}
-        self.router_info[router4]["port_ips_macs"] = {}
+        #self.router_info[router3]["port_ips_macs"] = {}
+        #self.router_info[router4]["port_ips_macs"] = {}
 
         self.connect_two_routers_here(router1, router2, 12, 11)
-        self.connect_two_routers_here(router2, router3, 13, 12)
-        self.connect_two_routers_here(router3, router4, 14, 13)
+        #self.connect_two_routers_here(router2, router3, 13, 12)
+        #self.connect_two_routers_here(router3, router4, 14, 13)
+
+        h1 = self.init_host(1, "10.0.1.201/16")
+        self.connect_router_host(router1, h1, 101, 201)
+        self.router_info[router1]["port_ips_macs"][101] = {
+            "ip": "10.0.%d.%d" % (1, 101),
+            "mac": "00:00:00:00:%02x:%02x" % (1, 101),
+            "mask": str(ipaddress.IPv4Network("0.0.0.0/%d" % 16).netmask),
+        }
+        h2 = self.init_host(2, "10.0.1.202/16")
+        self.connect_router_host(router1, h2, 102, 202)
+        self.router_info[router1]["port_ips_macs"][102] = {
+            "ip": "10.0.%d.%d" % (1, 102),
+            "mac": "00:00:00:00:%02x:%02x" % (1, 102),
+            "mask": str(ipaddress.IPv4Network("0.0.0.0/%d" % 16).netmask),
+        }
+        h3 = self.init_host(3, "10.0.1.203/16")
+        self.connect_router_host(router1, h3, 103, 203)
+        self.router_info[router1]["port_ips_macs"][103] = {
+            "ip": "10.0.%d.%d" % (1, 103),
+            "mac": "00:00:00:00:%02x:%02x" % (1, 103),
+            "mask": str(ipaddress.IPv4Network("0.0.0.0/%d" % 16).netmask),
+        }
+        h4 = self.init_host(4, "10.0.2.204/16")
+        self.connect_router_host(router1, h4, 104, 204)
+        self.router_info[router1]["port_ips_macs"][104] = {
+            "ip": "10.0.%d.%d" % (2, 104),
+            "mac": "00:00:00:00:%02x:%02x" % (2, 104),
+            "mask": str(ipaddress.IPv4Network("0.0.0.0/%d" % 16).netmask),
+        }
+        h5 = self.init_host(5, "10.0.2.205/16")
+        self.connect_router_host(router1, h5, 105, 205)
+        self.router_info[router1]["port_ips_macs"][105] = {
+            "ip": "10.0.%d.%d" % (2, 105),
+            "mac": "00:00:00:00:%02x:%02x" % (2, 105),
+            "mask": str(ipaddress.IPv4Network("0.0.0.0/%d" % 16).netmask),
+        }
+        h6 = self.init_host(6, "10.0.2.206/16")
+        self.connect_router_host(router1, h6, 106, 206)
+        self.router_info[router1]["port_ips_macs"][106] = {
+            "ip": "10.0.%d.%d" % (2, 106),
+            "mac": "00:00:00:00:%02x:%02x" % (2, 106),
+            "mask": str(ipaddress.IPv4Network("0.0.0.0/%d" % 16).netmask),
+        }
 
 # Massive Configuration Problem, yet to be resultved
 class OSPFTopo(WrapperTopo):

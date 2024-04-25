@@ -5,8 +5,8 @@ from scapy.all import Packet, Ether, IP, ARP, ICMP
 from utils.pwospf_proto_phill import PWOSPF_Header, PWOSPF_Hello, PWOSPF_LSU, PWOSPF_LSA
 from collections import defaultdict, Counter
 from utils.async_sniff import sniff
-from utils import *
-from phill.cpu_metadata import CPUMetadata
+from utils.utils_phill import *
+from utils.cpu_metadata import CPUMetadata
 import time
 
 ARP_OP_REQ = 0x0001

@@ -18,6 +18,17 @@ def prefix_len_to_mask(prefix_len):
         mask[i // 8] |= 1 << (7 - i % 8)
     return '.'.join(map(str, mask))
 
+def mask_to_prefix_len(mask):
+    '''turns mask to prefix length'''
+    mask = mask.split(".")
+    prefix_len = 0
+    for i in range(4):
+        byte = int(mask[i])
+        while byte:
+            prefix_len += byte & 1
+            byte >>= 1
+    return prefix_len
+
 def calculate_subnet(ip_addr, mask):
     # assume both ip_addr and mask are strings in the form of IP addresses
     ip_addr = ip_addr.split(".")

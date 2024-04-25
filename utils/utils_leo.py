@@ -3,7 +3,7 @@ import heapq
 import re
 
 from scapy.all import Ether, ARP  # type: ignore
-from cpu_metadata import CPUMetadata
+from utils.cpu_metadata import CPUMetadata
 from contextlib import contextmanager
 
 

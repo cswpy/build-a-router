@@ -2,8 +2,8 @@
 
 from p4app import P4Mininet
 
-from leo-controller import RouterController
-from phill-controller import MacLearningController
+from controller_leo import RouterController
+from controller_phill import MacLearningController
 from my_topo import *
 
 import copy
@@ -19,7 +19,8 @@ import time
 
 # topo = OSPFTopo()
 # topo = OSPFTopoHard()
-topo = ComprehensiveTopo()
+# topo = ComprehensiveTopo()
+topo = LineTopo()
 
 net = P4Mininet(program="router.p4", topo=topo, auto_arp=False)
 net.start()
@@ -61,11 +62,12 @@ for router, info in topo.router_info.items():
         action_params={"mgid": bcast_mgid},
     )
 
-    if router == "r1" or router == "r2":
+    if router == "r1":
         cpu = RouterController(r, 1, lsuint=10, router_info=info, hello_int=3)
     else:
         cpu = MacLearningController(r, topo.get_sw_intfs_info(router))
     # cpu = RouterController(r, 1, lsuint=3, arp_enabled=True, router_info=info)
+    print(topo.get_sw_intfs_info(router))
     cpu.start()
 
     controllers.append(cpu)
