@@ -196,7 +196,7 @@ class LSU_Daemon(Thread):
                                      match_fields={
                                          'hdr.ipv4.dstAddr': [subnet, 24]},
                                      action_name='MyIngress.ipv4_route',
-                                     action_params={'next_hop': next_hop_ip, 'port': port})
+                                     action_params={'dst_ip': next_hop_ip, 'egress_port': port})
         self.global_subnet2nexthop = self.pending_subnet2nexthop.copy()
         self.pending_subnet2nexthop = {}
         # print("Router {} Routing table synchronized to data plane".format(self.router.router_id))
@@ -334,7 +334,7 @@ class MacLearningController(Thread):
         self.router = PWOSPF_Router(
             sw, get_ip_from_ip_subnet(intfs_info[self.iface]), 1, intfs_info, self.iface)
         self.arp_timeout = 60
-        self.arp_thread = Thread(target=self.arp_thread)
+        #self.arp_thread = Thread(target=self.arp_thread)
         self.queueing_pkt_daemon = Queueing_Packet_Daemon(self)
 
     def arp_thread(self):
@@ -345,7 +345,7 @@ class MacLearningController(Thread):
                 if time.time() - entry_time > self.arp_timeout:
                     del self.arp_table[ip]
                     self.sw.removeTableEntry(table_name='MyIngress.arp_table',
-                                             match_fields={'next_hop_ip_addr': [ip, 32]})
+                                             match_fields={'next_hop_ip': [ip, 32]})
             self.stop_event.wait(self.arp_timeout)
 
     def addMacAddr(self, mac, port):
@@ -364,9 +364,9 @@ class MacLearningController(Thread):
             return
         self.arp_table[ip] = (mac, time.time())
         self.sw.insertTableEntry(table_name='MyIngress.arp_table',
-                                 match_fields={'next_hop_ip_addr': [ip, 32]},
-                                 action_name='MyIngress.arp_table_match',
-                                 action_params={'mac': mac})
+                                 match_fields={'next_hop_ip': [ip, 32]},
+                                 action_name='MyIngress.arp_lookup',
+                                 action_params={'dst_mac': mac})
 
     # def addIPV4FwdEntry(self, ip, mac, port):
     #     if ip in self.fwd_table:
@@ -521,14 +521,14 @@ class MacLearningController(Thread):
     def start(self, *args, **kwargs):
         super(MacLearningController, self).start(*args, **kwargs)
         self.router.start()
-        self.arp_thread.start()
+        #self.arp_thread.start()
         self.queueing_pkt_daemon.start()
         time.sleep(self.start_wait)
 
     def join(self, *args, **kwargs):
         self.router.join()
         self.stop_event.set()
-        self.arp_thread.join()
+        #self.arp_thread.join()
         self.queueing_pkt_daemon.join()
         super(MacLearningController, self).join(*args, **kwargs)
 
