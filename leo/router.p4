@@ -121,7 +121,6 @@ parser MyParser(packet_in packet,
         transition accept;
     }
 
-    // todo 
     state parse_cpu_metadata {
         packet.extract(hdr.cpu_metadata);
         transition select(hdr.cpu_metadata.origEtherType) {
@@ -156,11 +155,7 @@ control MyIngress(inout headers hdr,
                   inout metadata meta,
                   inout standard_metadata_t standard_metadata) {
 
-    bool ipv4_route_hit = false;
     ip4Addr_t next_hop_ip = (bit<32>) 0;
-    bool both_tables_miss = false;
-    bool unfinished = false;
-    bool unfinished_pwospf = false;
     port_t e_port = (bit<9>) 0;
     ip4Addr_t ip_to_match = (bit<32>) 0;
 
@@ -168,7 +163,6 @@ control MyIngress(inout headers hdr,
     counter(64, CounterType.packets) arp_counter;
     counter(64, CounterType.packets) cpu_counter;
     counter(64, CounterType.packets) dummy_counter;
-    counter(64, CounterType.packets) error_counter;
 
     /* provided actions */
     action drop() {
@@ -201,35 +195,21 @@ control MyIngress(inout headers hdr,
         standard_metadata.egress_spec = CPU_PORT;
     }
 
-    /* new actions */
-    // taking care of all incoming arp packets that are destined to me
-    // action handle_arps(macAddr_t src_mac, port_t egress_port) {
-    //     /* arp request case, and it is destined to the current router */
-    //     if (hdr.arp.opcode == ARP_OP_REQ) {
-    //         // send the packet back to sender
-    //         hdr.ethernet.dst_mac = hdr.ethernet.src_mac;
-    //         // fill in the src addr as my mac
-    //         hdr.ethernet.src_mac = src_mac;
-    //         // output port
-    //         standard_metadata.egress_spec = standard_metadata.ingress_port;
+    /* custom actions */
+    action egress_from_cpu() {
+        e_port = (bit<9>) hdr.cpu_metadata.dstPort;
+        set_egr(e_port);
+        cpu_meta_decap();
+    }
+    action arp_lookup(macAddr_t dst_mac) {
+        hdr.ethernet.dst_mac = dst_mac;
+    }
+    action ipv4_route(ip4Addr_t dst_ip, port_t egress_port) {
+        next_hop_ip = dst_ip;
+        standard_metadata.egress_spec = egress_port;
+    }
 
-    //         // change this to reply
-    //         /*
-    //             don't set this for discerning which is a request
-    //             hdr.arp.opcode = ARP_OP_REPLY;
-    //         */
-    //         hdr.arp.target_mac = hdr.arp.sender_mac;
-    //         hdr.arp.sender_mac = src_mac;
-    //         ip4Addr_t temp = hdr.arp.target_ip;
-    //         hdr.arp.target_ip = hdr.arp.sender_ip;
-    //         hdr.arp.sender_ip = temp; // target_ip
-    //     }
-    //     // else handled outside, since not do-able in here
-    //         /* arp reply case, forwarded to cpu */
-    //         /* or this is a malformed/wrong request */
-    //         // send_to_cpu();
-    // }
-
+    // mac -> port (ff:ff:ff:ff:ff:ff -> broadcast to all but ports 1, 0)
     table fwd_l2 {
         key = {
             hdr.ethernet.dst_mac: exact;
@@ -244,35 +224,18 @@ control MyIngress(inout headers hdr,
         default_action = NoAction;
     }
 
-    action arp_lookup(macAddr_t dst_mac) {
-        hdr.ethernet.dst_mac = dst_mac;
-    }
-
     table arp_table {
         key = {
             next_hop_ip: exact;
         }
         actions = {
             arp_lookup;
-            NoAction;
+            send_to_cpu;
         }
 
         size = 1024;
-        default_action = NoAction;
+        default_action = send_to_cpu;
     }
-    
-    // action ipv4_forward(macAddr_t dst_mac) {
-    //     // dst_mac being the next-hop address
-    //     // port being the egress port
-    //     hdr.ethernet.dst_mac = dst_mac;
-    // }
-
-    action ipv4_route(ip4Addr_t dst_ip, port_t egress_port) {
-        next_hop_ip = dst_ip;
-        standard_metadata.egress_spec = egress_port;
-        ipv4_route_hit = true;
-    }
-
 
     /* required tables */
     // forwarding rules installed by the control-plane pwospf routing table
@@ -281,12 +244,10 @@ control MyIngress(inout headers hdr,
             ip_to_match: lpm;
         }
         actions = {
-            // ipv4_forward;
             ipv4_route;
-            NoAction; // construct icmp unreachable there?
+            NoAction;
         }
         size = 1024;
-        // if not found, want to forward to cpu
         default_action = NoAction;
     }
 
@@ -296,20 +257,16 @@ control MyIngress(inout headers hdr,
             ip_to_match: lpm;
         }
         actions = {
-            // ipv4_forward;
             ipv4_route;
             NoAction;
         }
         size = 1024;
-        // if not found, want to go to the pwospf_forwarding_table
         // this is first queried because the high-priority comes with static configuration
         default_action = NoAction;
     }
 
-    
-
-    // for handling ip request dedicated for self router (all there needed is to forward to CPU), the CPU then have all the information
-    // the slow path
+    // for handling ip request dedicated for self router (all there needed is to forward to CPU)
+    // the CPU then have all the information
     table local_ips {
         key = {
             hdr.ipv4.dst_ip: exact;
@@ -322,131 +279,98 @@ control MyIngress(inout headers hdr,
         default_action = NoAction;
     }
 
-    action get_interface_mac(macAddr_t interface_mac) {
-        hdr.ethernet.src_mac = interface_mac;
-    }
-
-    table port_to_interface_mac {
-        key = {
-            standard_metadata.egress_spec: exact;
-        }
-        actions = {
-            get_interface_mac;
-            NoAction;
-        }
-        size = 16;
-        default_action = NoAction;
-    }
-
     apply {
         if (!hdr.cpu_metadata.isValid()) {
             if (hdr.arp.isValid()) {
-                arp_counter.count((bit<32>) 1);
                 // all incoming arp sent to cpu for caching
+                arp_counter.count((bit<32>) 1);
                 send_to_cpu();
                 return;
             }
             if (hdr.ipv4.isValid()) {
                 ip_counter.count((bit<32>) 1);
                 if (hdr.ipv4.protocol == OSPF_PROTO_NUM) {
-                    // all incoming ospf packets go to cpu
+                    // all incoming ospf packets go to cpu for processing
                     send_to_cpu();
                     return;
                 }
             }
         }
 
-
+        // OSPF to be sent out by the controller, go out directly
         if (hdr.cpu_metadata.isValid() && 
                 hdr.ipv4.isValid() && 
                 hdr.ipv4.protocol == OSPF_PROTO_NUM) {
-            // all ospf packets from cpu go out directly
-            e_port = (bit<9>) hdr.cpu_metadata.dstPort;
-            set_egr(e_port);
-            cpu_meta_decap();
+            egress_from_cpu();
             return;
         }
 
-
-        if (hdr.arp.isValid() && hdr.arp.opcode == ARP_OP_REQ) {
-            // must have valid cpu_meta_data
-            // would have set the source correctly
-            e_port = (bit<9>) hdr.cpu_metadata.dstPort;
-            // if (e_port == (bit<9>) 511) {
-            //     set_mgid((bit<16>) 1);
-            // } else {
-            //     if (e_port == (bit<9>) 0) {
-            //         error_counter.count((bit<32>) 1);
-            //     }
-            //     set_egr(e_port);
-            // }
-            cpu_meta_decap();
-            set_egr(e_port);
+        // handling all arp from CPU to be sent out
+        //  note: hdr.cpu_metadata should be valid here
+        if (hdr.arp.isValid()) {
+            if (hdr.arp.opcode == ARP_OP_REQ || hdr.arp.opcode == ARP_OP_REPLY) {
+                egress_from_cpu();
+            } else {
+                send_to_cpu();
+            }
             return;
         }
 
-        if (hdr.arp.isValid() && hdr.arp.opcode == ARP_OP_REPLY) {
-            e_port = (bit<9>) hdr.cpu_metadata.dstPort;
-            cpu_meta_decap();
-            set_egr(e_port);
-            return;
-        }
-
+        // arp handling should be done here
         dummy_counter.count((bit<32>) 1);
         
-        // arp handling should be done here
-
+        // at this point, doesn't matter as much, just need to send out
         if (hdr.cpu_metadata.isValid()) {
             cpu_meta_decap();
         }
-        
-        // e_port = (bit<9>)hdr.cpu_metadata.dstPort;
-        //         cpu_meta_decap();
-        //         set_egr(e_port);
-        //         return;
+
+        // Note: this shouldn't be called here for ips
+        // egress_from_cpu();
         
         if (hdr.ipv4.isValid()) {
+            // checksum incorrect
             if (standard_metadata.checksum_error == 1) {
                 drop();
                 return;
             }
-            // to me
+
+            // if to local ips, then send to cpu
             if (local_ips.apply().hit) {
                 return;
             }
+
+            // ttl going to be invalid, drop
             if (hdr.ipv4.ttl == 1) {
                 drop();
                 return;
             }
 
+            // which to match
             ip_to_match = hdr.ipv4.dst_ip;
 
             if (!static_routing_table.apply().hit) {
                 if (!routing_table.apply().hit) {
                     next_hop_ip = hdr.ipv4.dst_ip;
                 }
-                // if (!routing_table.apply().hit) {
-                //     // no hit, go to cpu
-                //     send_to_cpu();
-                //     return;
-                // }
                 // now the next_hop ip is stored in next_hop_ip
             }
 
+            // arp should hit here, else to cpu
             if (!arp_table.apply().hit) {
-                send_to_cpu();
                 return;
             }
 
+            // if arp hits, here should also hit
             fwd_l2.apply();
 
+            // set the ttl and send out
             hdr.ipv4.ttl = hdr.ipv4.ttl - 1;
 
             return;
         }
 
+        // nothing hit, send to cpu
         send_to_cpu();
-        return;
     }
 }
 
