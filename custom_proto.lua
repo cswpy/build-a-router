@@ -14,12 +14,12 @@ local f_dstPort = ProtoField.uint16("cpu_metadata.dstPort", "Destination Port", 
 -- PWOSPF common fields
 local f_version = ProtoField.uint8("pwospf.version", "Version", base.DEC)
 local f_type = ProtoField.uint8("pwospf.type", "Type", base.DEC)
-local f_packet_length = ProtoField.uint16("pwospf.packet_length", "Packet Length", base.DEC)
+local f_packet_length = ProtoField.uint16("pwospf.len", "Packet Length", base.DEC)
 local f_router_id = ProtoField.ipv4("pwospf.router_id", "Router ID")
 local f_area_id = ProtoField.uint32("pwospf.area_id", "Area ID")
-local f_checksum = ProtoField.uint16("pwospf.checksum", "Checksum", base.HEX)
-local f_autype = ProtoField.uint16("pwospf.autype", "Authentication Type", base.DEC)
-local f_authentication = ProtoField.uint64("pwospf.authentication", "Authentication", base.HEX)
+local f_checksum = ProtoField.uint16("pwospf.cksum", "Checksum", base.HEX)
+local f_autype = ProtoField.uint16("pwospf.au_type", "Authentication Type", base.DEC)
+local f_authentication = ProtoField.uint64("pwospf.auth", "Authentication", base.HEX)
 
 -- Hello Packet Fields
 local f_netmask = ProtoField.ipv4("pwospf.hello.netmask", "Network Mask")

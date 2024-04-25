@@ -1,13 +1,17 @@
 from threading import Thread, Event, Lock
 from queue import Queue
+import threading
 from scapy.all import sendp
-from scapy.all import Packet, Ether, IP, ARP, ICMP
-from utils.pwospf_proto_phill import PWOSPF_Header, PWOSPF_Hello, PWOSPF_LSU, PWOSPF_LSA
+from scapy.all import Packet, Ether, IP, ARP, ICMP # type: ignore
+#from utils.pwospf_proto_phill import PWOSPF_Header, PWOSPF_Hello, PWOSPF_LSU, PWOSPF_LSA
+from utils.pwospf_leo import PWOSPF, HELLO, LSU, LSA
 from collections import defaultdict, Counter
 from utils.async_sniff import sniff
 from utils.utils_phill import *
 from utils.cpu_metadata import CPUMetadata
 import time
+from controller_leo import ArpReqLimitRefresher
+from utils.utils_leo import locking
 
 ARP_OP_REQ = 0x0001
 ARP_OP_REPLY = 0x0002
@@ -37,7 +41,7 @@ class PWOSPF_Interface():
 
 
 class Queueing_Packet_Daemon(Thread):
-    def __init__(self, router, start_wait=0.3, queue_timeout=0.8, **kwargs):
+    def __init__(self, router, start_wait=0.3, queue_timeout=0.618, **kwargs):
         super(Queueing_Packet_Daemon, self).__init__(**kwargs)
         self.router = router
         self.start_wait = start_wait
@@ -52,6 +56,7 @@ class Queueing_Packet_Daemon(Thread):
             if not self.queue.empty():
                 pkt, next_hop_ip, sent_time = self.queue.get()
                 if next_hop_ip in self.router.arp_table:
+                    pkt[CPUMetadata].dstPort = self.router.port_for_mac[self.router.arp_table[next_hop_ip][0]]
                     pkt[Ether].dst = self.router.arp_table[next_hop_ip][0]
                     self.router.send(pkt)
                 else:
@@ -99,22 +104,23 @@ class LSU_Daemon(Thread):
 
         def craft_LSU_packet():
             LSA_list = []
-            # if a PWOSPF_Interface does not have any neighbors, we assume it has a local subnet, and we add a dummy LSA with routerid only once
+            # if a PWOSPF_Interface does not have any neighbors, we assume it has a local subnet, and we add a dummy LSA with router_id only once
             has_local_subnet = False
             for intf in self.router.intfs:
                 if intf.neighbors:
                     for router_id, _ in intf.neighbors.keys():
-                        lsa_pkt = PWOSPF_LSA(subnet=calculate_subnet(
-                            intf.ip_addr, intf.subnet_mask), mask=intf.subnet_mask, routerid=router_id)
+                        lsa_pkt = LSA(subnet=calculate_subnet(
+                            intf.ip_addr, intf.subnet_mask), mask=intf.subnet_mask, router_id=router_id)
                         LSA_list.append(lsa_pkt)
                 else:
-                    if not has_local_subnet:
-                        lsa_pkt = PWOSPF_LSA(subnet=calculate_subnet(
-                            intf.ip_addr, intf.subnet_mask), mask=intf.subnet_mask, routerid="0.0.0.0")
-                        LSA_list.append(lsa_pkt)
-                    has_local_subnet = True
-            lsu_pkt = PWOSPF_Header(type=4, routerid=self.router.router_id,
-                                    areaid=self.router.area_id) / PWOSPF_LSU(sequence=self.seq, lsaList=LSA_list)
+                    # if not has_local_subnet:
+                    #     lsa_pkt = LSA(subnet=calculate_subnet(
+                    #         intf.ip_addr, intf.subnet_mask), mask=intf.subnet_mask, router_id="0.0.0.0")
+                    #     LSA_list.append(lsa_pkt)
+                    # has_local_subnet = True
+                    pass
+            lsu_pkt = PWOSPF(type=4, router_id=self.router.router_id,
+                                    area_id=self.router.area_id) / LSU(sequence=self.seq, lsaList=LSA_list)
             return lsu_pkt
 
         lsu_pkt = craft_LSU_packet()
@@ -125,42 +131,42 @@ class LSU_Daemon(Thread):
                 self.router.send(pkt)
         # Updating adjacency information for the router itself
         self.adjacency_list[self.router.router_id] = []
-        for lsa in lsu_pkt[PWOSPF_LSU].lsaList:
+        for lsa in lsu_pkt[LSU].lsaList:
             self.adjacency_list[self.router.router_id].append(
-                LSA_tuple(lsa.subnet, lsa.mask, lsa.routerid))
+                LSA_tuple(lsa.subnet, lsa.mask, lsa.router_id))
         self.seq += 1
 
     def handle_LSU(self, pkt):
-        rid = pkt[PWOSPF_Header].routerid
+        rid = pkt[PWOSPF].router_id
         if rid == self.router.router_id:
             return
-        if pkt[PWOSPF_LSU].sequence <= self.topology[rid]['seq']:
+        if pkt[LSU].sequence <= self.topology[rid]['seq']:
             return
-        self.topology[rid]['seq'] = pkt[PWOSPF_LSU].sequence
-        self.topology[rid]['last_recv_time'] = time.time()
+        self.topology[rid]['seq'] = pkt[LSU].sequence
+        self.topology[rid]['last_recv_time'] = time.time() # type: ignore
         # if valid packet and topology has changed -> reset adjacency list for that router
 
-        new_lsa_list = Counter([(lsa.subnet, lsa.mask, lsa.routerid)
-                                for lsa in pkt[PWOSPF_LSU].lsaList])
+        new_lsa_list = Counter([(lsa.subnet, lsa.mask, lsa.router_id)
+                                for lsa in pkt[LSU].lsaList])
 
-        is_chksum_same = len(self.topology[rid]['counter']) == len(
-            new_lsa_list) and self.topology[rid]['counter'] == new_lsa_list
+        is_chksum_same = len(self.topology[rid]['counter']) == len( # type: ignore
+            new_lsa_list) and self.topology[rid]['counter'] == new_lsa_list 
 
         # if is_chksum_same:
         #     print('LSU update received but checksum is same')
         # else:
         #     print('LSU update detected, flooding...')
-        self.topology[rid]['checksum'] = pkt[PWOSPF_Header].checksum
+        self.topology[rid]['checksum'] = pkt[PWOSPF].cksum
 
         if not is_chksum_same:
             self.adjacency_list[rid] = []
-            for lsa in pkt[PWOSPF_LSU].lsaList:
+            for lsa in pkt[LSU].lsaList:
                 self.adjacency_list[rid].append(
-                    LSA_tuple(lsa.subnet, lsa.mask, lsa.routerid))
-                self.topology[rid]['subnets'].add(lsa.subnet)
+                    LSA_tuple(lsa.subnet, lsa.mask, lsa.router_id))
+                self.topology[rid]['subnets'].add(lsa.subnet) # type: ignore
             # flood LSU packets
-            pkt[PWOSPF_LSU].ttl -= 1
-            if pkt[PWOSPF_LSU].ttl > 0:
+            pkt[LSU].ttl -= 1
+            if pkt[LSU].ttl > 0:
                 for intf in self.router.intfs:
                     if intf.port == pkt[CPUMetadata].srcPort or not intf.neighbors:
                         continue
@@ -176,7 +182,7 @@ class LSU_Daemon(Thread):
             for dst, next_hop in next_hops.items():
                 intf, neighbor_router_ip = self.router.nexthop_rid2intf[next_hop]
                 next_hop_port = intf.port
-                for dst_subnet in self.topology[dst]['subnets']:
+                for dst_subnet in self.topology[dst]['subnets']: # type: ignore
                     if (dst_subnet not in self.pending_subnet2nexthop) or (nhop[dst] < subnet_nhop[dst_subnet]):
                         self.pending_subnet2nexthop[dst_subnet] = (
                             neighbor_router_ip, next_hop_port)
@@ -189,12 +195,12 @@ class LSU_Daemon(Thread):
             if subnet in self.global_subnet2nexthop:
                 if (next_hop_ip, port) != self.global_subnet2nexthop[subnet]:
                     self.sw.removeTableEntry(table_name='MyIngress.routing_table',
-                                             match_fields={'hdr.ipv4.dstAddr': [subnet, 24]})
+                                             match_fields={'ip_to_match': [subnet, 16]})
                 else:
                     continue
             self.sw.insertTableEntry(table_name='MyIngress.routing_table',
                                      match_fields={
-                                         'hdr.ipv4.dstAddr': [subnet, 24]},
+                                         'ip_to_match': [subnet, 16]},
                                      action_name='MyIngress.ipv4_route',
                                      action_params={'dst_ip': next_hop_ip, 'egress_port': port})
         self.global_subnet2nexthop = self.pending_subnet2nexthop.copy()
@@ -259,9 +265,9 @@ class PWOSPF_Router(Thread):
             origEtherType=0x0800, srcPort=1, dstPort=intf.port)
         IPLayer = IP(src=intf.ip_addr, dst=PWOSPF_ALLSPFROUTERS,
                      proto=PWOSPF_PROTO, ttl=1)
-        PWOSPFHeader = PWOSPF_Header(
-            type=1, routerid=self.router_id, areaid=self.area_id)
-        PWOSPFHello = PWOSPF_Hello(
+        PWOSPFHeader = PWOSPF(
+            type=1, router_id=self.router_id, area_id=self.area_id)
+        PWOSPFHello = HELLO(
             netmask=intf.subnet_mask, helloint=intf.helloint)
         hello_pkt = etherLayer / CPUlayer / IPLayer / PWOSPFHeader / PWOSPFHello
 
@@ -337,6 +343,10 @@ class MacLearningController(Thread):
         #self.arp_thread = Thread(target=self.arp_thread)
         self.queueing_pkt_daemon = Queueing_Packet_Daemon(self)
 
+        self.arpReq_from_mac_seen = set()
+        self.afms_lock = threading.Lock()
+        self.arp_req_limit_refresher_thread = ArpReqLimitRefresher(self)
+
     def arp_thread(self):
         while True:
             if self.stop_event and self.stop_event.is_set():
@@ -354,17 +364,22 @@ class MacLearningController(Thread):
             return
 
         self.sw.insertTableEntry(table_name='MyIngress.fwd_l2',
-                                 match_fields={'hdr.ethernet.dstAddr': [mac]},
+                                 match_fields={'hdr.ethernet.dst_mac': [mac]},
                                  action_name='MyIngress.set_egr',
                                  action_params={'port': port})
         self.port_for_mac[mac] = port
 
     def addArpEntry(self, ip, mac):
+        # print('DEBUG: Adding ARP entry for IP: {}, MAC: {}'.format(ip, mac))
+        # # print types of ip and mac
+        # print(type(ip))
+        # print(type(mac))
+
         if ip in self.arp_table:
             return
         self.arp_table[ip] = (mac, time.time())
         self.sw.insertTableEntry(table_name='MyIngress.arp_table',
-                                 match_fields={'next_hop_ip': [ip, 32]},
+                                 match_fields={'next_hop_ip': ip},
                                  action_name='MyIngress.arp_lookup',
                                  action_params={'dst_mac': mac})
 
@@ -383,7 +398,11 @@ class MacLearningController(Thread):
         self.addArpEntry(ip, mac)
         # self.addIPV4FwdEntry(ip, mac, pkt[CPUMetadata].srcPort)
         if pkt[ARP].pdst not in self.local_ip_table:
-            self.send(pkt)
+            if pkt[Ether].dst in self.port_for_mac:
+                pkt[CPUMetadata].dstPort = self.port_for_mac[pkt[Ether].dst]
+                self.send(pkt)
+            else:
+                print('[ALERT] ARP reply destined to unknown MAC address, dropping...')
 
     def handleArpRequest(self, pkt):
         self.addMacAddr(pkt[ARP].hwsrc, pkt[CPUMetadata].srcPort)
@@ -391,32 +410,49 @@ class MacLearningController(Thread):
         self.addArpEntry(ip, mac)
         # self.addIPV4FwdEntry(ip, mac, pkt[CPUMetadata].srcPort)
         # pkt.show2()
-        target_subnet = calculate_subnet(pkt[ARP].pdst, self.controller_mask)
-        # Send ARP reply for ARP requests to local IPs
-        if pkt[ARP].pdst in self.local_ip_table:
-            print('ARP destined to local IP {}'.format(pkt[ARP].pdst))
-            dstIP = pkt[ARP].pdst
-            intf = self.local_ip_table[dstIP]
-            pkt[Ether].dst = pkt[Ether].src
-            pkt[Ether].src = intf.MAC()
-            pkt[CPUMetadata].dstPort = pkt[CPUMetadata].srcPort
-            pkt[CPUMetadata].srcPort = 1
-            pkt[ARP].op = ARP_OP_REPLY
-            pkt[ARP].hwdst = pkt[ARP].hwsrc
-            pkt[ARP].pdst = pkt[ARP].psrc
-            pkt[ARP].hwsrc = intf.MAC()
-            pkt[ARP].psrc = get_ip_from_ip_subnet(self.intfs_info[intf.name])
-            self.send(pkt)
-        # only forward ARP requests within the same subnet
-        elif target_subnet == self.controller_subnet:
-            print('ARP request in the same subnet {}, forwarding...'.format(target_subnet))
-            self.send(pkt)
-        else:
-            print('Dropped arp request because not in the same subnet, target subnet {}, controller subnet {}'.format(target_subnet, self.controller_subnet))
+
+        with locking(self.afms_lock):
+            if (
+                (pkt[ARP].hwsrc, pkt[ARP].hwdst, pkt[ARP].pdst)
+            ) in self.arpReq_from_mac_seen:
+                print("dropped the same arp")
+                return
+
+            target_subnet = calculate_subnet(pkt[ARP].pdst, self.controller_mask)
+            # Send ARP reply for ARP requests to local IPs
+            if pkt[ARP].pdst in self.local_ip_table:
+                print('ARP destined to local IP {}'.format(pkt[ARP].pdst))
+                dstIP = pkt[ARP].pdst
+                intf = self.local_ip_table[dstIP]
+                pkt[Ether].dst = pkt[Ether].src
+                pkt[Ether].src = intf.MAC()
+                pkt[CPUMetadata].dstPort = pkt[CPUMetadata].srcPort
+                pkt[CPUMetadata].srcPort = 1
+                pkt[ARP].op = ARP_OP_REPLY
+                pkt[ARP].hwdst = pkt[ARP].hwsrc
+                pkt[ARP].pdst = pkt[ARP].psrc
+                pkt[ARP].hwsrc = intf.MAC()
+                pkt[ARP].psrc = get_ip_from_ip_subnet(self.intfs_info[intf.name])
+                self.send(pkt)
+            # only forward ARP requests within the same subnet
+            elif target_subnet == self.controller_subnet:
+                print('ARP request in the same subnet {}, forwarding...'.format(target_subnet))
+                for intf in self.intfs:
+                    intf_name = intf.name
+                    if intf_name != self.controller_intf.name:
+                        pkt[CPUMetadata].dstPort = self.sw.ports[intf]
+                        if pkt[CPUMetadata].srcPort == pkt[CPUMetadata].dstPort:
+                            continue
+                        # pkt.show2()
+                        print(pkt[CPUMetadata].dstPort, pkt[CPUMetadata].srcPort)
+                        self.send(pkt)
+                self.arpReq_from_mac_seen.add((pkt[ARP].hwsrc, pkt[ARP].hwdst, pkt[ARP].pdst))
+            else:
+                print('Dropped arp request because not in the same subnet, target subnet {}, controller subnet {}'.format(target_subnet, self.controller_subnet))
 
     def sendICMPEchoReply(self, pkt):
         new_pkt = Ether(src=self.controller_intf.MAC(), dst=pkt[Ether].src) / CPUMetadata(origEtherType=0x0800, srcPort=1, dstPort=pkt[CPUMetadata].srcPort) / IP(
-            src=get_ip_from_ip_subnet(self.intfs_info[self.controller_intf.name]), dst=pkt[IP].src) / ICMP(type=ICMP_ECHO_REPLY_TYPE, code=ICMP_ECHO_REPLY_CODE, seq=pkt[ICMP].seq, id=pkt[ICMP].id) / pkt[ICMP].payload
+            src=pkt[IP].dst, dst=pkt[IP].src) / ICMP(type=ICMP_ECHO_REPLY_TYPE, code=ICMP_ECHO_REPLY_CODE, seq=pkt[ICMP].seq, id=pkt[ICMP].id) / pkt[ICMP].payload
         self.send(new_pkt)
 
     def handlePkt(self, pkt):
@@ -425,7 +461,7 @@ class MacLearningController(Thread):
             pkt.show2()
             print('------------------------------------')
         assert CPUMetadata in pkt, "Should only receive packets from switch with special header"
-        # if PWOSPF_Header not in pkt:
+        # if PWOSPF not in pkt:
         #     pkt.show2()
         # Ignore packets that the CPU sends:
         if pkt[CPUMetadata].fromCpu == 1:
@@ -441,7 +477,7 @@ class MacLearningController(Thread):
                 self.sendICMPEchoReply(pkt)
                 return
 
-        if PWOSPF_Header in pkt:
+        if PWOSPF in pkt:
             self.handlePWOSPFPkt(pkt)
         elif IP in pkt:
             # Send ARP request
@@ -451,6 +487,7 @@ class MacLearningController(Thread):
             if target_subnet not in self.router.lsu_daemon.global_subnet2nexthop and target_subnet != self.controller_subnet:
                 print('Destination subnet {} not in routing table, dropping...'.format(
                     target_subnet))
+                pkt.show2()
                 # new_pkt = Ether(src=self.controller_intf.MAC(), dst=pkt[Ether].src) / CPUMetadata(origEtherType=0x0800, srcPort=1, dstPort=pkt[CPUMetadata].srcPort) / IP(
                 #     src=get_ip_from_ip_subnet(self.intfs_info[self.controller_intf.name]), dst=pkt[IP].src) / ICMP(type=ICMP_DEST_UNREACHABLE_REPLY_TYPE, code=ICMP_NET_UNREACHABLE_REPLY_CODE)
                 # self.send(new_pkt)
@@ -463,18 +500,26 @@ class MacLearningController(Thread):
                 new_pkt[ARP].pdst = pkt[IP].dst
                 new_pkt[ARP].hwsrc = self.controller_intf.MAC()
                 new_pkt[ARP].psrc = self.controller_ip
-                self.send(new_pkt)
-            # queue the packet
-            self.queueing_pkt_daemon.queue.put((pkt, pkt[IP].dst, time.time()))
+                for intf in self.intfs:
+                    intf_name = intf.name
+                    target_subnet = calculate_subnet(pkt[IP].dst, self.controller_mask)
+                    if intf_name != self.controller_intf.name and calculate_subnet(get_ip_from_ip_subnet(self.intfs_info[intf_name]), get_mask_from_ip_subnet(self.intfs_info[intf_name])) == target_subnet:
+                        new_pkt[CPUMetadata].dstPort = self.sw.ports[intf]
+                        if pkt[CPUMetadata].srcPort == pkt[CPUMetadata].dstPort:
+                            continue
+                        # new_pkt.show2()
+                        self.send(new_pkt)
+                # queue the packet
+                self.queueing_pkt_daemon.queue.put((pkt, pkt[IP].dst, time.time()))
 
     def handlePWOSPFPkt(self, pkt):
 
         def handleHelloPkt(pkt, intf):
-            if pkt[PWOSPF_Hello].netmask != intf.subnet_mask:
+            if pkt[HELLO].netmask != intf.subnet_mask:
                 return
-            if pkt[PWOSPF_Hello].helloint != intf.helloint:
+            if pkt[HELLO].helloint != intf.helloint:
                 return
-            router_id = pkt[PWOSPF_Header].routerid
+            router_id = pkt[PWOSPF].router_id
             neighbor_router_ip = pkt[IP].src
             intf.neighbors[(router_id, neighbor_router_ip)] = time.time()
             self.router.nexthop_rid2intf[router_id] = (
@@ -485,16 +530,16 @@ class MacLearningController(Thread):
             if self.router.lsu_daemon:
                 self.router.lsu_daemon.trigger_lsu_event.set()
 
-        if pkt[PWOSPF_Header].version != 2:
+        if pkt[PWOSPF].version != 2:
             return
-        if pkt[PWOSPF_Header].type != 1 and pkt[PWOSPF_Header].type != 4:
+        if pkt[PWOSPF].type != 1 and pkt[PWOSPF].type != 4:
             return
-        if pkt[PWOSPF_Header].areaid != self.router.area_id:
+        if pkt[PWOSPF].area_id != self.router.area_id:
             return
-        if pkt[PWOSPF_Header].autype != 0:
+        if pkt[PWOSPF].au_type != 0:
             return
 
-        if PWOSPF_LSU in pkt:
+        if LSU in pkt:
             self.router.lsu_daemon.handle_LSU(pkt)
             return
 
@@ -504,7 +549,7 @@ class MacLearningController(Thread):
                 intf = self.router.intfs[i]
                 break
 
-        if intf and PWOSPF_Hello in pkt:
+        if intf and HELLO in pkt:
             handleHelloPkt(pkt, intf)
 
     def send(self, *args, **override_kwargs):
@@ -549,4 +594,8 @@ class MacLearningController(Thread):
         for subnet, (next_hop_ip, port) in self.router.lsu_daemon.global_subnet2nexthop.items():
             print("Subnet: {}, Next Hop: IP {} Port {}".format(
                 subnet, next_hop_ip, port))
+        print("************* Router State ***************")
+        print("-------------------------------------------")
+        self.sw.printTableEntries()
+        print("-------------------------------------------")
         print("*******************************************")

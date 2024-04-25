@@ -68,7 +68,7 @@ def find_next_hop(graph, start):
             if new_dist < distances[neighbor]:
                 parent[neighbor] = node
                 distances[neighbor] = new_dist
-                heapq.heappush(pq, (new_dist, neighbor))
+                heapq.heappush(pq, (new_dist, neighbor)) # type: ignore
 
     next_hop ={}
 

@@ -19,9 +19,9 @@ import time
 
 # topo = OSPFTopo()
 # topo = OSPFTopoHard()
-# topo = SimpleRingTopo()
+#topo = ComprehensiveTopo()
+topo = SimpleRingTopo()
 # topo = LineTopo()
-topo = RingTopo()
 
 net = P4Mininet(program="router.p4", topo=topo, auto_arp=False)
 net.start()
@@ -65,7 +65,7 @@ for router, info in topo.router_info.items():
 
     # cpu = MacLearningController(r, topo.get_sw_intfs_info(router))
 
-    if router == "r1" or router == "r3":
+    if router == "r3" or router == "r5" or router == "r6":
         cpu = RouterController(r, 1, lsuint=10, router_info=info, hello_int=5)
     else:
         cpu = MacLearningController(r, topo.get_sw_intfs_info(router))
@@ -81,6 +81,8 @@ h1 = net.get("h1")
 h2 = net.get("h2")
 h3 = net.get("h3")
 h4 = net.get("h4")
+h5 = net.get("h5")
+h6 = net.get("h6")
 h11 = net.get("h11")
 
 # print(h1.cmd("route add default gw 10.0.1.0"))
@@ -100,10 +102,13 @@ h11 = net.get("h11")
 # print(h2.cmd("ping -c1 10.1.2.206"))
 # print(h4.cmd("ping -c1 10.0.1.203"))
 
-print(h4.cmd("ping -c1 10.0.2.222"))
 print(h1.cmd("ping -c1 10.0.3.222"))
-print(h1.cmd("ping -c1 10.0.1.224"))
-print(h11.cmd("ping -c1 10.0.4.222"))
+print(h1.cmd("ping -c1 10.0.4.222"))
+print(h2.cmd("ping -c1 10.0.5.222"))
+print(h6.cmd("ping -c1 10.0.3.222"))
+print(h11.cmd("ping -c1 10.0.1.222"))
+
+
 
 
 

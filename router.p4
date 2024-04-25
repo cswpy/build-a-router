@@ -321,6 +321,12 @@ control MyIngress(inout headers hdr,
         
         // at this point, doesn't matter as much, just need to send out
         if (hdr.cpu_metadata.isValid()) {
+            e_port = (bit<9>) hdr.cpu_metadata.dstPort;
+            if (e_port != (bit<9>) 0) {
+                set_egr(e_port);
+                cpu_meta_decap();
+                return;
+            }
             cpu_meta_decap();
         }
 

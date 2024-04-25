@@ -19,9 +19,8 @@ import time
 
 # topo = OSPFTopo()
 # topo = OSPFTopoHard()
-# topo = SimpleRingTopo()
-# topo = LineTopo()
-topo = RingTopo()
+# topo = ComprehensiveTopo()
+topo = LineTopo()
 
 net = P4Mininet(program="router.p4", topo=topo, auto_arp=False)
 net.start()
@@ -63,9 +62,7 @@ for router, info in topo.router_info.items():
         action_params={"mgid": bcast_mgid},
     )
 
-    # cpu = MacLearningController(r, topo.get_sw_intfs_info(router))
-
-    if router == "r1" or router == "r3":
+    if router == "r1":
         cpu = RouterController(r, 1, lsuint=10, router_info=info, hello_int=5)
     else:
         cpu = MacLearningController(r, topo.get_sw_intfs_info(router))
@@ -81,29 +78,25 @@ h1 = net.get("h1")
 h2 = net.get("h2")
 h3 = net.get("h3")
 h4 = net.get("h4")
-h11 = net.get("h11")
+h5 = net.get("h5")
+h6 = net.get("h6")
 
-# print(h1.cmd("route add default gw 10.0.1.0"))
-# print(h2.cmd("route add default gw 10.0.1.0"))
-# print(h3.cmd("route add default gw 10.0.1.0"))
-# print(h4.cmd("route add default gw 10.1.2.0"))
-# print(h5.cmd("route add default gw 10.1.2.0"))
-# print(h6.cmd("route add default gw 10.1.2.0"))
+print(h1.cmd("route add default gw 10.0.1.0"))
+print(h2.cmd("route add default gw 10.0.1.0"))
+print(h3.cmd("route add default gw 10.0.1.0"))
+print(h4.cmd("route add default gw 10.1.2.0"))
+print(h5.cmd("route add default gw 10.1.2.0"))
+print(h6.cmd("route add default gw 10.1.2.0"))
 
-# print(h4.cmd("ping -c1 10.1.2.106"))
-# print(h1.cmd("ping -c1 10.0.1.102"))
-# print(h1.cmd("ping -c1 10.1.2.106"))
-# print(h5.cmd("ping -c1 10.0.1.101"))
+print(h4.cmd("ping -c1 10.1.2.106"))
+print(h1.cmd("ping -c1 10.0.1.102"))
+print(h1.cmd("ping -c1 10.1.2.106"))
+print(h5.cmd("ping -c1 10.0.1.101"))
 
-# print(h1.cmd("ping -c1 10.0.1.202"))
-# print(h5.cmd("ping -c1 10.1.2.204"))
-# print(h2.cmd("ping -c1 10.1.2.206"))
-# print(h4.cmd("ping -c1 10.0.1.203"))
-
-print(h4.cmd("ping -c1 10.0.2.222"))
-print(h1.cmd("ping -c1 10.0.3.222"))
-print(h1.cmd("ping -c1 10.0.1.224"))
-print(h11.cmd("ping -c1 10.0.4.222"))
+print(h1.cmd("ping -c1 10.0.1.202"))
+print(h5.cmd("ping -c1 10.1.2.204"))
+print(h2.cmd("ping -c1 10.1.2.206"))
+print(h4.cmd("ping -c1 10.0.1.203"))
 
 
 

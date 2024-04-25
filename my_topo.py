@@ -1,5 +1,5 @@
 import ipaddress
-from mininet.topo import Topo
+from mininet.topo import Topo 
 from utils.utils_leo import extract_ip_mask, get_trailing_number, int_to_ip
 from utils.utils_phill import mask_to_prefix_len
 
@@ -149,7 +149,7 @@ class LineTopo(WrapperTopo):
         WrapperTopo.__init__(self, **opts)
 
         router1 = self.init_router(1, "10.0.1.0/16")
-        router2 = self.init_router(2, "10.0.2.0/16")
+        router2 = self.init_router(2, "10.1.2.0/16")
         #router3 = self.init_router(3, "10.0.3.0/16")
         #router4 = self.init_router(4, "10.0.4.0/16")
 
@@ -158,7 +158,21 @@ class LineTopo(WrapperTopo):
         #self.router_info[router3]["port_ips_macs"] = {}
         #self.router_info[router4]["port_ips_macs"] = {}
 
-        self.connect_two_routers_here(router1, router2, 12, 11)
+        self.connect_router_router(router1, router2, 12, 11)
+        self.router_info[router1]["port_ips_macs"][12] = {
+            "ip": "10.1.%d.%d" % (1, 12),
+            "mac": "00:00:00:00:%02x:%02x" % (1, 12),
+            "mask": str(ipaddress.IPv4Network("0.0.0.0/%d" % 16).netmask),
+        }
+        self.router_info[router2]["port_ips_macs"][11] = {
+            "ip": "10.0.%d.%d" % (2, 11),
+            "mac": "00:00:00:00:%02x:%02x" % (2, 11),
+            "mask": str(ipaddress.IPv4Network("0.0.0.0/%d" % 16).netmask),
+        }
+
+
+
+
         #self.connect_two_routers_here(router2, router3, 13, 12)
         #self.connect_two_routers_here(router3, router4, 14, 13)
 
@@ -183,24 +197,24 @@ class LineTopo(WrapperTopo):
             "mac": "00:00:00:00:%02x:%02x" % (1, 103),
             "mask": str(ipaddress.IPv4Network("0.0.0.0/%d" % 16).netmask),
         }
-        h4 = self.init_host(4, "10.0.2.204/16")
-        self.connect_router_host(router1, h4, 104, 204)
-        self.router_info[router1]["port_ips_macs"][104] = {
-            "ip": "10.0.%d.%d" % (2, 104),
+        h4 = self.init_host(4, "10.1.2.204/16")
+        self.connect_router_host(router2, h4, 104, 204)
+        self.router_info[router2]["port_ips_macs"][104] = {
+            "ip": "10.1.%d.%d" % (2, 104),
             "mac": "00:00:00:00:%02x:%02x" % (2, 104),
             "mask": str(ipaddress.IPv4Network("0.0.0.0/%d" % 16).netmask),
         }
-        h5 = self.init_host(5, "10.0.2.205/16")
-        self.connect_router_host(router1, h5, 105, 205)
-        self.router_info[router1]["port_ips_macs"][105] = {
-            "ip": "10.0.%d.%d" % (2, 105),
+        h5 = self.init_host(5, "10.1.2.205/16")
+        self.connect_router_host(router2, h5, 105, 205)
+        self.router_info[router2]["port_ips_macs"][105] = {
+            "ip": "10.1.%d.%d" % (2, 105),
             "mac": "00:00:00:00:%02x:%02x" % (2, 105),
             "mask": str(ipaddress.IPv4Network("0.0.0.0/%d" % 16).netmask),
         }
-        h6 = self.init_host(6, "10.0.2.206/16")
-        self.connect_router_host(router1, h6, 106, 206)
-        self.router_info[router1]["port_ips_macs"][106] = {
-            "ip": "10.0.%d.%d" % (2, 106),
+        h6 = self.init_host(6, "10.1.2.206/16")
+        self.connect_router_host(router2, h6, 106, 206)
+        self.router_info[router2]["port_ips_macs"][106] = {
+            "ip": "10.1.%d.%d" % (2, 106),
             "mac": "00:00:00:00:%02x:%02x" % (2, 106),
             "mask": str(ipaddress.IPv4Network("0.0.0.0/%d" % 16).netmask),
         }
@@ -392,6 +406,162 @@ class ComprehensiveTopo(WrapperTopo):
         self.router_info[router11]["port_ips_macs"][111] = {
             "ip": "10.2.%d.%d" % (11, 111),
             "mac": "00:00:00:00:%02x:%02x" % (11, 111),
+            "mask": str(ipaddress.IPv4Network("0.0.0.0/%d" % 16).netmask),
+        }
+
+class SimpleRingTopo(WrapperTopo):
+    def __init__(self, **opts):
+        WrapperTopo.__init__(self, **opts)
+
+        router1 = self.init_router(1, "10.0.1.0/16")
+        router2 = self.init_router(2, "10.0.2.0/16")
+        router3 = self.init_router(3, "10.0.3.0/16")
+        router4 = self.init_router(4, "10.0.4.0/16")
+        router5 = self.init_router(5, "10.0.5.0/16")
+        router6 = self.init_router(6, "10.0.6.0/16")
+
+        self.router_info[router1]["port_ips_macs"] = {}
+        self.router_info[router2]["port_ips_macs"] = {}
+        self.router_info[router3]["port_ips_macs"] = {}
+        self.router_info[router4]["port_ips_macs"] = {}
+        self.router_info[router5]["port_ips_macs"] = {}
+        self.router_info[router6]["port_ips_macs"] = {}
+
+        self.connect_two_routers_here(router1, router2, 12, 11)
+        self.connect_two_routers_here(router2, router3, 13, 12)
+        self.connect_two_routers_here(router3, router4, 14, 13)
+        self.connect_two_routers_here(router4, router5, 15, 14)
+        self.connect_two_routers_here(router5, router6, 16, 15)
+        self.connect_two_routers_here(router6, router1, 11, 16)
+
+        #extra links
+        self.connect_router_router(router1, router3, 13, 11)
+        self.router_info[router1]["port_ips_macs"][13] = {
+            "ip": "10.0.%d.%d" % (1, 13),
+            "mac": "00:00:00:00:%02x:%02x" % (1, 13),
+            "mask": str(ipaddress.IPv4Network("0.0.0.0/%d" % 16).netmask),
+        }
+        self.router_info[router3]["port_ips_macs"][11] = {
+            "ip": "10.0.%d.%d" % (3, 11),
+            "mac": "00:00:00:00:%02x:%02x" % (3, 11),
+            "mask": str(ipaddress.IPv4Network("0.0.0.0/%d" % 16).netmask),
+        }
+
+        self.connect_router_router(router2, router5, 15, 12)
+        self.router_info[router2]["port_ips_macs"][15] = {
+            "ip": "10.0.%d.%d" % (2, 15),
+            "mac": "00:00:00:00:%02x:%02x" % (2, 15),
+            "mask": str(ipaddress.IPv4Network("0.0.0.0/%d" % 16).netmask),
+        }
+        self.router_info[router5]["port_ips_macs"][12] = {
+            "ip": "10.0.%d.%d" % (5, 12),
+            "mac": "00:00:00:00:%02x:%02x" % (5, 12),
+            "mask": str(ipaddress.IPv4Network("0.0.0.0/%d" % 16).netmask),
+        }
+
+        h1 = self.init_host(1, "10.0.1.222/16")
+        self.connect_router_host(router1, h1, 111, 222)
+        self.router_info[router1]["port_ips_macs"][111] = {
+            "ip": "10.0.%d.%d" % (1, 111),
+            "mac": "00:00:00:00:%02x:%02x" % (1, 111),
+            "mask": str(ipaddress.IPv4Network("0.0.0.0/%d" % 16).netmask),
+        }
+        h11 = self.init_host(11, "10.0.1.224/16")
+        self.connect_router_host(router1, h11, 112, 224)
+        self.router_info[router1]["port_ips_macs"][112] = {
+            "ip": "10.0.%d.%d" % (1, 112),
+            "mac": "00:00:00:00:%02x:%02x" % (1, 112),
+            "mask": str(ipaddress.IPv4Network("0.0.0.0/%d" % 16).netmask),
+        }
+        h2 = self.init_host(2, "10.0.2.222/16")
+        self.connect_router_host(router2, h2, 111, 222)
+        self.router_info[router2]["port_ips_macs"][111] = {
+            "ip": "10.0.%d.%d" % (2, 111),
+            "mac": "00:00:00:00:%02x:%02x" % (2, 111),
+            "mask": str(ipaddress.IPv4Network("0.0.0.0/%d" % 16).netmask),
+        }
+        h3 = self.init_host(3, "10.0.3.222/16")
+        self.connect_router_host(router3, h3, 111, 222)
+        self.router_info[router3]["port_ips_macs"][111] = {
+            "ip": "10.0.%d.%d" % (3, 111),
+            "mac": "00:00:00:00:%02x:%02x" % (3, 111),
+            "mask": str(ipaddress.IPv4Network("0.0.0.0/%d" % 16).netmask),
+        }
+        h4 = self.init_host(4, "10.0.4.222/16")
+        self.connect_router_host(router4, h4, 111, 222)
+        self.router_info[router4]["port_ips_macs"][111] = {
+            "ip": "10.0.%d.%d" % (4, 111),
+            "mac": "00:00:00:00:%02x:%02x" % (4, 111),
+            "mask": str(ipaddress.IPv4Network("0.0.0.0/%d" % 16).netmask),
+        }
+        h5 = self.init_host(5, "10.0.5.222/16")
+        self.connect_router_host(router5, h5, 111, 222)
+        self.router_info[router5]["port_ips_macs"][111] = {
+            "ip": "10.0.%d.%d" % (5, 111),
+            "mac": "00:00:00:00:%02x:%02x" % (5, 111),
+            "mask": str(ipaddress.IPv4Network("0.0.0.0/%d" % 16).netmask),
+        }
+        h6 = self.init_host(6, "10.0.6.222/16")
+        self.connect_router_host(router6, h6, 111, 222)
+        self.router_info[router6]["port_ips_macs"][111] = {
+            "ip": "10.0.%d.%d" % (6, 111),
+            "mac": "00:00:00:00:%02x:%02x" % (6, 111),
+            "mask": str(ipaddress.IPv4Network("0.0.0.0/%d" % 16).netmask),
+        }
+
+
+class RingTopo(WrapperTopo):
+    def __init__(self, **opts):
+        WrapperTopo.__init__(self, **opts)
+
+        router1 = self.init_router(1, "10.0.1.0/16")
+        router2 = self.init_router(2, "10.0.2.0/16")
+        router3 = self.init_router(3, "10.0.3.0/16")
+        router4 = self.init_router(4, "10.0.4.0/16")
+
+        self.router_info[router1]["port_ips_macs"] = {}
+        self.router_info[router2]["port_ips_macs"] = {}
+        self.router_info[router3]["port_ips_macs"] = {}
+        self.router_info[router4]["port_ips_macs"] = {}
+
+        self.connect_two_routers_here(router1, router2, 12, 11)
+        self.connect_two_routers_here(router2, router3, 13, 12)
+        self.connect_two_routers_here(router3, router4, 14, 13)
+        self.connect_two_routers_here(router4, router1, 11, 14)
+
+        h1 = self.init_host(1, "10.0.1.222/16")
+        self.connect_router_host(router1, h1, 111, 222)
+        self.router_info[router1]["port_ips_macs"][111] = {
+            "ip": "10.0.%d.%d" % (1, 111),
+            "mac": "00:00:00:00:%02x:%02x" % (1, 111),
+            "mask": str(ipaddress.IPv4Network("0.0.0.0/%d" % 16).netmask),
+        }
+        h11 = self.init_host(11, "10.0.1.224/16")
+        self.connect_router_host(router1, h11, 112, 224)
+        self.router_info[router1]["port_ips_macs"][112] = {
+            "ip": "10.0.%d.%d" % (1, 112),
+            "mac": "00:00:00:00:%02x:%02x" % (1, 112),
+            "mask": str(ipaddress.IPv4Network("0.0.0.0/%d" % 16).netmask),
+        }
+        h2 = self.init_host(2, "10.0.2.222/16")
+        self.connect_router_host(router2, h2, 111, 222)
+        self.router_info[router2]["port_ips_macs"][111] = {
+            "ip": "10.0.%d.%d" % (2, 111),
+            "mac": "00:00:00:00:%02x:%02x" % (2, 111),
+            "mask": str(ipaddress.IPv4Network("0.0.0.0/%d" % 16).netmask),
+        }
+        h3 = self.init_host(3, "10.0.3.222/16")
+        self.connect_router_host(router3, h3, 111, 222)
+        self.router_info[router3]["port_ips_macs"][111] = {
+            "ip": "10.0.%d.%d" % (3, 111),
+            "mac": "00:00:00:00:%02x:%02x" % (3, 111),
+            "mask": str(ipaddress.IPv4Network("0.0.0.0/%d" % 16).netmask),
+        }
+        h4 = self.init_host(4, "10.0.4.222/16")
+        self.connect_router_host(router4, h4, 111, 222)
+        self.router_info[router4]["port_ips_macs"][111] = {
+            "ip": "10.0.%d.%d" % (4, 111),
+            "mac": "00:00:00:00:%02x:%02x" % (4, 111),
             "mask": str(ipaddress.IPv4Network("0.0.0.0/%d" % 16).netmask),
         }
 

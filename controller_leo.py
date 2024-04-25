@@ -6,10 +6,10 @@ from collections import Counter, defaultdict
 from scapy.all import Ether, IP, ARP, ICMP, sendp, Raw  # type: ignore
 from threading import Thread, Event
 
-from async_sniff import sniff
-from cpu_metadata import CPUMetadata
-from utils import *
-from pwospf import *
+from utils.async_sniff import sniff
+from utils.cpu_metadata import CPUMetadata
+from utils.utils_leo import *
+from utils.pwospf_leo import *
 
 # constants
 ARP_OP_REQ = 0x0001
@@ -63,7 +63,8 @@ class RouterController(Thread):
         self.routing_table = (
             {}
         )  # ip -> (next_hop_ip, port); port can be gotten from ip -> arp -> port?
-        self.adj_list = defaultdict(set)  # router_id -> set of adjacent routers
+        # router_id -> set of adjacent routers
+        self.adj_list = defaultdict(set)
         self.lsuint = lsuint
         self.lsu_seq = defaultdict(lambda: 0)
         self.next_lsu_flood = 0
@@ -435,7 +436,8 @@ class RouterController(Thread):
         sendp(*args, **kwargs)
 
     def run(self):
-        sniff(iface=self.cpu_iface, prn=self.handlePkt, stop_event=self.stop_event)
+        sniff(iface=self.cpu_iface, prn=self.handlePkt,
+              stop_event=self.stop_event)
 
     def start(self, *args, **kwargs):
         super(RouterController, self).start(*args, **kwargs)
@@ -530,14 +532,16 @@ class RouterController(Thread):
             if node == self.router_id:
                 # note: this should hanld the later `len(path) == 0` case, investigate later
                 continue
-            shortest_paths[node] = reconstruct_path(predecessors, self.router_id, node)
+            shortest_paths[node] = reconstruct_path(
+                predecessors, self.router_id, node)
 
         finished = True
         for router_id, path in shortest_paths.items():
             if len(path) == 0:
                 # maybe investigate later
                 continue
-            next_hop_ip, next_hop_port = self.get_interface_ip_from_router_id(path[0])
+            next_hop_ip, next_hop_port = self.get_interface_ip_from_router_id(
+                path[0])
 
             if next_hop_ip is None:
                 # not enough information yet
@@ -547,7 +551,8 @@ class RouterController(Thread):
             if router_id in self.routing_table:
                 if next_hop_ip != self.routing_table[router_id][0]:
                     # item changed TODO: update?
-                    self.routing_table[router_id] = (next_hop_ip, next_hop_port)
+                    self.routing_table[router_id] = (
+                        next_hop_ip, next_hop_port)
                 else:
                     # In and previous Same, do nothing
                     pass
@@ -561,7 +566,8 @@ class RouterController(Thread):
                 ):
                     self.rt.insertTableEntry(
                         table_name="MyIngress.routing_table",
-                        match_fields={"ip_to_match": [router_subnet, 16]},  # change
+                        match_fields={"ip_to_match": [
+                            router_subnet, 16]},  # change
                         action_name="MyIngress.ipv4_route",
                         action_params={
                             "dst_ip": next_hop_ip,
@@ -718,39 +724,36 @@ class RouterController(Thread):
             pkt[IP].chksum = None
             pkt[IP].ttl = 64
 
-            # Extract the original IP header and the first 8 bytes of the payload
-            original_ip_header = pkt[IP].copy()
-            original_ip_header.len = None  # Let Scapy recalculate
-            payload_start = bytes(pkt[IP].payload)[:8]
-            icmp_payload = original_ip_header / Raw(load=payload_start)
 
             # Create ICMP Host Unreachable message
-            icmp = ICMP(type=3, code=1)
-            icmp.chksum = None  # Start with no checksum
+            # icmp = ICMP(type=3, code=1)
+            # icmp.chksum = None  # Start with no checksum
 
             # Full ICMP message as bytes for checksum calculation
-            full_icmp_message = bytes(icmp) + bytes(icmp_payload)
-            full_icmp_message = (
-                full_icmp_message[:2] + b"\x00\x00" + full_icmp_message[4:]
-            )  # Zero checksum field for calculation
+            # full_icmp_message = bytes(icmp) + bytes(icmp_payload)
+            # full_icmp_message = (
+            #     full_icmp_message[:2] + b"\x00\x00" + full_icmp_message[4:]
+            # )  # Zero checksum field for calculation
 
             # Calculate and set ICMP checksum (incorrect)
             #   computed_checksum = checksum(full_icmp_message)
             #   icmp.chksum = computed_checksum  # Update checksum field
 
             # Update the packet's ICMP layer
-            pkt[ICMP] = icmp / icmp_payload
+            pkt[ICMP].type = 3
+            pkt[ICMP].code = 1
+            pkt[ICMP].chksum = None
+
 
             # Metadata and sending (if used in your setup)
-            pkt[CPUMetadata].fromCpu = 1
             pkt[CPUMetadata].dstPort = pkt[CPUMetadata].srcPort
             pkt[CPUMetadata].srcPort = 1
 
             pkt[IP].dst = pkt[IP].src
             pkt[IP].src = self.cpu_ip
 
-            pkt[ICMP].chksum = None
-            pkt[ICMP].chksum = 0x3D4D
+            # pkt[ICMP].chksum = None
+            # pkt[ICMP].chksum = 0x3D4D
 
             # Packet logging, maybe useful for later
             #     print("whole packet: \n", bytes(pkt))
@@ -760,6 +763,29 @@ class RouterController(Thread):
 
             self.send(pkt)
             return
+        
+    def print_state(self):
+        '''
+        It should print the ARP table, the PWOSPF's adjacency list, and the routing table
+        '''
+        print("*************** ARP Table ******************")
+        for ip, (mac, _) in self.arp_cache.items():
+            print("IP: {}, MAC: {}".format(ip, mac))
+        print("********* PWOSPF Interface States **********")
+        for intf in self.rt.intfs:
+            print(intf)
+        print("********* PWOSPF Adjacency List ***********")
+        for rid, neighbors in self.adj_list.items():
+            print("Router ID: {}, Neighbor links: {}".format(rid, neighbors))
+        print("************* Routing Table ***************")
+        for ip, (next_hop_ip, port) in self.routing_table.items():
+            print("IP: {}, Next Hop: IP {} Port {}".format(
+                ip, next_hop_ip, port))
+        print("************* Router State ***************")
+        print("-------------------------------------------")
+        self.rt.printTableEntries()
+        print("-------------------------------------------")
+        print("*******************************************")
 
 
 class RouterInterface:
@@ -773,6 +799,12 @@ class RouterInterface:
         self.neighbors = {}  # router_id -> (ip, mask)
         self.helloint = helloint
         self.neighbor_update_times = {}
+
+    def __str__(self):
+        """print info and neighbors of the interface"""
+        return "IP: {}, Mask: {}, MAC: {}, Port: {}, Neighbors: {}".format(
+            self.ip, self.mask, self.mac, self.port, self.neighbors
+        )
 
 
 class ArpCache:
@@ -857,6 +889,10 @@ class ArpCache:
             if ip not in self.cache:
                 return None
             return self.cache[ip][0]
+        
+    def items(self):
+        with locking(self.lock):
+            return self.cache.items()
 
 
 class HelloThread(Thread):
@@ -928,7 +964,8 @@ class HelloThread(Thread):
                         pass
                     try:
                         for adj_router in self.controller.adj_list[router_id]:
-                            self.controller.adj_list[adj_router].remove(router_id)
+                            self.controller.adj_list[adj_router].remove(
+                                router_id)
                         del self.controller.adj_list[router_id]
                     except:
                         pass
@@ -955,7 +992,8 @@ class LSUThread(Thread):
                 cur_time = time.time()
                 if self.controller.next_lsu_flood > cur_time:
                     # print("sleeping ", self.controller.next_lsu_flood - cur_time)
-                    self.stop_event.wait(self.controller.next_lsu_flood - cur_time)
+                    self.stop_event.wait(
+                        self.controller.next_lsu_flood - cur_time)
                     continue
 
                 self.controller.lsuFlood()
