@@ -89,14 +89,6 @@ class WrapperTopo(Topo):
             "mask": str(ipaddress.IPv4Network("0.0.0.0/%d" % 16).netmask),
         }
 
-    def get_sw_intfs_info(self, sw_name):
-        assert sw_name in self.router_info, "Invalid switch name"
-        sw_port_ips_macs = self.router_info[sw_name]["port_ips_macs"]
-        intfs_info = {}
-        for portn, port_info in sw_port_ips_macs.items():
-            intf_name = "%s-eth%d" % (sw_name, portn)
-            intfs_info[intf_name] = port_info['ip'] + '/' + port_info['mask'].prefixlen
-        return intfs_info
 
 class SingleRouterTopo(WrapperTopo):
     def __init__(self, n, **opts):

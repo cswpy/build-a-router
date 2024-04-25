@@ -104,3 +104,17 @@ venv.bak/
 .mypy_cache/
 p4app-logs
 .vscode
+
+# Local
+.DS_Store
+.vscode/
+.idea/
+
+# log files
+*.log
+
+# Cache
+*__pycache__*
+
+# misc
+misc/

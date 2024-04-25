@@ -127,19 +127,19 @@ class RouterController(Thread):
             # this is for me
             self.addMacAddr(pkt[ARP].hwsrc, pkt[CPUMetadata].srcPort)
             self.addArp(pkt[ARP].psrc, pkt[ARP].hwsrc)
-            print("received!")
+            # print("received!")
             with self.cv:
                 self.cv.notify()
             return
 
         if arp_layer.hwsrc == self.cpu_mac:
-            print("received my own arp, dropping")
+            # print("received my own arp, dropping")
             assert arp_layer.psrc == self.cpu_ip
             return
 
         for _, iface in self.ifaces.items():
             if arp_layer.hwsrc == iface.mac:
-                print("received my own arp, dropping")
+                # print("received my own arp, dropping")
                 assert arp_layer.psrc == iface.ip
                 return
 
@@ -148,13 +148,13 @@ class RouterController(Thread):
         self.addArp(pkt[ARP].pdst, pkt[ARP].hwdst)
 
         if (pkt[ARP].hwdst) == self.cpu_mac:
-            print("this is an arp for me, dropping")
+            # print("this is an arp for me, dropping")
             assert arp_layer.pdst == self.cpu_ip
             return
 
         for _, iface in self.ifaces.items():
             if arp_layer.hwdst == iface.mac:
-                print("this is an arp for me, dropping")
+                # print("this is an arp for me, dropping")
                 assert arp_layer.pdst == iface.ip
                 return
 
@@ -191,13 +191,13 @@ class RouterController(Thread):
         arp_layer = pkt[ARP]
 
         if arp_layer.hwsrc == self.cpu_mac:
-            print("received my own arp, dropping")
+            # print("received my own arp, dropping")
             assert arp_layer.psrc == self.cpu_ip
             return
 
         for _, iface in self.ifaces.items():
             if arp_layer.hwsrc == iface.mac:
-                print("received my own arp, dropping")
+                # print("received my own arp, dropping")
                 assert arp_layer.psrc == iface.ip
                 return
 
@@ -252,20 +252,9 @@ class RouterController(Thread):
 
             # The case that I am just a rely
 
-            # print("relayed out arp request: ")
-            # hashed_arp = hash_arp_packet(pkt)
-            # if (
-            #     hashed_arp in self.arp_request_packets_seen
-            #     and self.arp_request_packets_seen[hashed_arp] > 3
-            # ):
-            #     # print("too many dup requests, dropped")
-            #     return
-            # else:
-            #     self.arp_request_packets_seen[hashed_arp] += 1
-
             src_port = pkt[CPUMetadata].srcPort
             if not pkt[Ether].dst == "ff:ff:ff:ff:ff:ff":
-                print("dropped arp req forwarded by host")
+                # print("dropped arp req forwarded by host")
                 # pkt.show2()
                 return
             # assert pkt[Ether].dst == "ff:ff:ff:ff:ff:ff"
@@ -335,7 +324,7 @@ class RouterController(Thread):
             target_mac = self.arp_cache.get_mac(pkt[IP].dst)
 
             if target_mac is not None:
-                print("got it, nice")
+                # print("got it, nice")
                 # pkt.show2()
                 # forward the packet
                 pkt[CPUMetadata].dstPort = self.port_for_mac[target_mac]
@@ -809,13 +798,13 @@ class RouterController(Thread):
 
         with self.cv:
             self.cv.wait(1.0)
-        print("we are here", time.time())
+        # print("we are here", time.time())
 
         target_mac = self.arp_cache.get_mac(pkt[IP].dst)
         icmp_layer = pkt[ICMP]
 
         if target_mac is not None:
-            print("got it, nice")
+            # print("got it, nice")
             # pkt.show2()
             # forward the packet
             pkt[CPUMetadata].dstPort = self.port_for_mac[target_mac]
