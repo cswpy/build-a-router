@@ -176,7 +176,7 @@ print(r1.readCounter("cpu_counter", 1)[0])
 
 # """
 
-time.sleep(5)
+time.sleep(45)
 
 r1 = net.get("r1")
 r2 = net.get("r2")
@@ -239,9 +239,9 @@ print(h2.cmd("ping -c1 10.1.10.222"))
 # print(h1.cmd("ping -c1 10.2.11.222"))
 # print(h1.cmd("traceroute 10.2.11.222"))
 
-# print(h1.cmd("ping -c1 10.0.4.13"))
-# print(h1.cmd("ping -c1 10.0.5.0"))
-# print(h1.cmd("ping -c1 10.1.10.0"))
+print(h1.cmd("ping -c1 10.0.4.13"))
+print(h1.cmd("ping -c1 10.0.5.0"))
+print(h1.cmd("ping -c1 10.1.10.0"))
 
 
 # Unreachables
@@ -273,9 +273,6 @@ print(r1.readCounter("dummy_counter", 1)[0])
 print(r1.readCounter("cpu_counter", 1)[0])
 print(r1.readCounter("ip_counter", 1)[0])
 print(r1.readCounter("arp_counter", 1)[0])
-
-
-time.sleep(45)
 
 
 # topo = BadTopo()
