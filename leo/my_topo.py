@@ -140,23 +140,6 @@ class DoubleRouterTopo(WrapperTopo):
             "mask": str(ipaddress.IPv4Network("0.0.0.0/%d" % 24).netmask),
         }
 
-class LineTopo(WrapperTopo):
-    def __init__(self, n, **opts):
-        WrapperTopo.__init__(self, **opts)
-
-        router1 = self.init_router(1, "10.0.1.0/16")
-        router2 = self.init_router(2, "10.0.2.0/16")
-        router3 = self.init_router(3, "10.0.3.0/16")
-        router4 = self.init_router(4, "10.0.4.0/16")
-
-        self.router_info[router1]["port_ips_macs"] = {}
-        self.router_info[router2]["port_ips_macs"] = {}
-        self.router_info[router3]["port_ips_macs"] = {}
-        self.router_info[router4]["port_ips_macs"] = {}
-
-        self.connect_two_routers_here(router1, router2, 12, 11)
-        self.connect_two_routers_here(router2, router3, 13, 12)
-        self.connect_two_routers_here(router3, router4, 14, 13)
 
 # Massive Configuration Problem, yet to be resultved
 class OSPFTopo(WrapperTopo):

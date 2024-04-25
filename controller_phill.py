@@ -2,11 +2,11 @@ from threading import Thread, Event, Lock
 from queue import Queue
 from scapy.all import sendp
 from scapy.all import Packet, Ether, IP, ARP, ICMP
-from pwospf_proto import PWOSPF_Header, PWOSPF_Hello, PWOSPF_LSU, PWOSPF_LSA
+from utils.pwospf_proto_phill import PWOSPF_Header, PWOSPF_Hello, PWOSPF_LSU, PWOSPF_LSA
 from collections import defaultdict, Counter
-from async_sniff import sniff
+from utils.async_sniff import sniff
 from utils import *
-from cpu_metadata import CPUMetadata
+from phill.cpu_metadata import CPUMetadata
 import time
 
 ARP_OP_REQ = 0x0001

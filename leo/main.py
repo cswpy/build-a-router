@@ -2,8 +2,7 @@
 
 from p4app import P4Mininet
 
-from leo-controller import RouterController
-from phill-controller import MacLearningController
+from controller import RouterController
 from my_topo import *
 
 import copy
@@ -61,10 +60,7 @@ for router, info in topo.router_info.items():
         action_params={"mgid": bcast_mgid},
     )
 
-    if router == "r1" or router == "r2":
-        cpu = RouterController(r, 1, lsuint=10, router_info=info, hello_int=3)
-    else:
-        cpu = MacLearningController(r, topo.get_sw_intfs_info(router))
+    cpu = RouterController(r, 1, lsuint=10, router_info=info, hello_int=3)
     # cpu = RouterController(r, 1, lsuint=3, arp_enabled=True, router_info=info)
     cpu.start()
 
@@ -180,7 +176,7 @@ print(r1.readCounter("cpu_counter", 1)[0])
 
 # """
 
-time.sleep(15)
+time.sleep(5)
 
 r1 = net.get("r1")
 r2 = net.get("r2")
@@ -230,15 +226,15 @@ h11 = net.get("h11")
 # time.sleep(5)
 # print(h9.cmd("arp -a"))
 
-# print(h1.cmd("route add default gw 10.0.9.0"))
-# print(h2.cmd("route add default gw 10.0.9.0"))
-# print(h10.cmd("route add default gw 10.1.10.0"))
-# print(h11.cmd("route add default gw 10.2.11.0"))
+print(h1.cmd("route add default gw 10.0.9.0"))
+print(h2.cmd("route add default gw 10.0.9.0"))
+print(h10.cmd("route add default gw 10.1.10.0"))
+print(h11.cmd("route add default gw 10.2.11.0"))
 
-# print(h1.cmd("ping -c1 10.0.4.222"))
-# print(h1.cmd("ping -c1 10.1.10.222"))
-# print(h1.cmd("ping -c1 10.2.11.222"))
-# print(h2.cmd("ping -c1 10.1.10.222"))
+print(h1.cmd("ping -c1 10.0.4.222"))
+print(h1.cmd("ping -c1 10.1.10.222"))
+print(h1.cmd("ping -c1 10.2.11.222"))
+print(h2.cmd("ping -c1 10.1.10.222"))
 
 # print(h1.cmd("ping -c1 10.2.11.222"))
 # print(h1.cmd("traceroute 10.2.11.222"))
@@ -249,8 +245,8 @@ h11 = net.get("h11")
 
 
 # Unreachables
-# print(h1.cmd("ping -c1 10.0.4.223"))
-# print(h1.cmd("ping -c1 10.1.10.223"))
+print(h1.cmd("ping -c1 10.0.4.223"))
+print(h1.cmd("ping -c1 10.1.10.223"))
 
 # while True:
 #     pass
@@ -279,7 +275,7 @@ print(r1.readCounter("ip_counter", 1)[0])
 print(r1.readCounter("arp_counter", 1)[0])
 
 
-# time.sleep(45)
+time.sleep(45)
 
 
 # topo = BadTopo()
