@@ -436,8 +436,7 @@ class RouterController(Thread):
         sendp(*args, **kwargs)
 
     def run(self):
-        sniff(iface=self.cpu_iface, prn=self.handlePkt,
-              stop_event=self.stop_event)
+        sniff(iface=self.cpu_iface, prn=self.handlePkt, stop_event=self.stop_event)
 
     def start(self, *args, **kwargs):
         super(RouterController, self).start(*args, **kwargs)
@@ -532,16 +531,14 @@ class RouterController(Thread):
             if node == self.router_id:
                 # note: this should hanld the later `len(path) == 0` case, investigate later
                 continue
-            shortest_paths[node] = reconstruct_path(
-                predecessors, self.router_id, node)
+            shortest_paths[node] = reconstruct_path(predecessors, self.router_id, node)
 
         finished = True
         for router_id, path in shortest_paths.items():
             if len(path) == 0:
                 # maybe investigate later
                 continue
-            next_hop_ip, next_hop_port = self.get_interface_ip_from_router_id(
-                path[0])
+            next_hop_ip, next_hop_port = self.get_interface_ip_from_router_id(path[0])
 
             if next_hop_ip is None:
                 # not enough information yet
@@ -551,8 +548,7 @@ class RouterController(Thread):
             if router_id in self.routing_table:
                 if next_hop_ip != self.routing_table[router_id][0]:
                     # item changed TODO: update?
-                    self.routing_table[router_id] = (
-                        next_hop_ip, next_hop_port)
+                    self.routing_table[router_id] = (next_hop_ip, next_hop_port)
                 else:
                     # In and previous Same, do nothing
                     pass
@@ -566,8 +562,7 @@ class RouterController(Thread):
                 ):
                     self.rt.insertTableEntry(
                         table_name="MyIngress.routing_table",
-                        match_fields={"ip_to_match": [
-                            router_subnet, 16]},  # change
+                        match_fields={"ip_to_match": [router_subnet, 16]},  # change
                         action_name="MyIngress.ipv4_route",
                         action_params={
                             "dst_ip": next_hop_ip,
@@ -716,58 +711,26 @@ class RouterController(Thread):
             pkt[Ether].src = self.cpu_mac
             self.send(pkt)
         else:
-            print("generate bad response")
-            # Modify Ethernet Layer
-            pkt[Ether].dst = pkt[Ether].src
-            pkt[Ether].src = self.cpu_mac
 
-            pkt[IP].chksum = None
-            pkt[IP].ttl = 64
+            # This works, good
+            # Note: The takeaway is that you may always want to not care about performance when regenerating a packet
+            new_pkt = (
+                Ether(src=self.cpu_mac, dst=pkt[Ether].src)
+                / CPUMetadata(
+                    origEtherType=0x0800, srcPort=1, dstPort=pkt[CPUMetadata].srcPort
+                )
+                / IP(src=self.cpu_ip, dst=pkt[IP].src)
+                / ICMP(type=3, code=1)
+                / pkt[IP]
+            )
 
-
-            # Create ICMP Host Unreachable message
-            # icmp = ICMP(type=3, code=1)
-            # icmp.chksum = None  # Start with no checksum
-
-            # Full ICMP message as bytes for checksum calculation
-            # full_icmp_message = bytes(icmp) + bytes(icmp_payload)
-            # full_icmp_message = (
-            #     full_icmp_message[:2] + b"\x00\x00" + full_icmp_message[4:]
-            # )  # Zero checksum field for calculation
-
-            # Calculate and set ICMP checksum (incorrect)
-            #   computed_checksum = checksum(full_icmp_message)
-            #   icmp.chksum = computed_checksum  # Update checksum field
-
-            # Update the packet's ICMP layer
-            pkt[ICMP].type = 3
-            pkt[ICMP].code = 1
-            pkt[ICMP].chksum = None
-
-
-            # Metadata and sending (if used in your setup)
-            pkt[CPUMetadata].dstPort = pkt[CPUMetadata].srcPort
-            pkt[CPUMetadata].srcPort = 1
-
-            pkt[IP].dst = pkt[IP].src
-            pkt[IP].src = self.cpu_ip
-
-            # pkt[ICMP].chksum = None
-            # pkt[ICMP].chksum = 0x3D4D
-
-            # Packet logging, maybe useful for later
-            #     print("whole packet: \n", bytes(pkt))
-            #     print("icmp: \n", bytes(pkt[ICMP]))
-            #     print("icmp data: \n", pkt[ICMP])
-            #     print("hex: \n", bytes(pkt[ICMP]).hex())
-
-            self.send(pkt)
+            self.send(new_pkt)
             return
-        
+
     def print_state(self):
-        '''
+        """
         It should print the ARP table, the PWOSPF's adjacency list, and the routing table
-        '''
+        """
         print("*************** ARP Table ******************")
         for ip, (mac, _) in self.arp_cache.items():
             print("IP: {}, MAC: {}".format(ip, mac))
@@ -779,8 +742,7 @@ class RouterController(Thread):
             print("Router ID: {}, Neighbor links: {}".format(rid, neighbors))
         print("************* Routing Table ***************")
         for ip, (next_hop_ip, port) in self.routing_table.items():
-            print("IP: {}, Next Hop: IP {} Port {}".format(
-                ip, next_hop_ip, port))
+            print("IP: {}, Next Hop: IP {} Port {}".format(ip, next_hop_ip, port))
         print("************* Router State ***************")
         print("-------------------------------------------")
         self.rt.printTableEntries()
@@ -889,7 +851,7 @@ class ArpCache:
             if ip not in self.cache:
                 return None
             return self.cache[ip][0]
-        
+
     def items(self):
         with locking(self.lock):
             return self.cache.items()
@@ -964,8 +926,7 @@ class HelloThread(Thread):
                         pass
                     try:
                         for adj_router in self.controller.adj_list[router_id]:
-                            self.controller.adj_list[adj_router].remove(
-                                router_id)
+                            self.controller.adj_list[adj_router].remove(router_id)
                         del self.controller.adj_list[router_id]
                     except:
                         pass
@@ -992,8 +953,7 @@ class LSUThread(Thread):
                 cur_time = time.time()
                 if self.controller.next_lsu_flood > cur_time:
                     # print("sleeping ", self.controller.next_lsu_flood - cur_time)
-                    self.stop_event.wait(
-                        self.controller.next_lsu_flood - cur_time)
+                    self.stop_event.wait(self.controller.next_lsu_flood - cur_time)
                     continue
 
                 self.controller.lsuFlood()
